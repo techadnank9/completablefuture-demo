@@ -3,7 +3,6 @@ package demo.download.server;
 import javax.imageio.ImageIO;
 import java.awt.Color;
 import java.awt.Font;
-import java.awt.GradientPaint;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
@@ -28,12 +27,8 @@ import java.util.Random;
 public final class SampleImage {
 
     /** Brand colours, matching the slides and the web page. */
-    private static final Color INK = new Color(0x0E1B2A);
-    private static final Color INK_2 = new Color(0x1B3550);
     private static final Color TEAL = new Color(0x00A896);
-    private static final Color SLATE = new Color(0x6B7C8C);
     private static final Color AMBER = new Color(0xF2A65A);
-    private static final Color PAPER = new Color(0xE8EEF3);
 
     private SampleImage() {
     }
@@ -50,10 +45,10 @@ public final class SampleImage {
      * @return the written file
      */
     public static Path write(Path target, int targetMb) throws IOException {
-        // Measured: a dithered PNG of this illustration costs about 1.75 bytes per
-        // pixel, so this picks a resolution that lands near the requested size.
+        // Measured: a dithered PNG of this field costs about 2.3 bytes per pixel,
+        // so this picks a resolution that lands near the requested size.
         long targetBytes = (long) targetMb * 1024 * 1024;
-        int pixels = (int) (targetBytes / 1.75);
+        int pixels = (int) (targetBytes / 2.3);
         int width = (int) Math.round(Math.sqrt(pixels * 16.0 / 9.0));
         int height = (int) Math.round(width * 9.0 / 16.0);
 
@@ -73,59 +68,60 @@ public final class SampleImage {
         return target;
     }
 
-    /** The illustration itself: the demo's own progress bars, drawn large. */
+    /**
+     * A continuous wave field.
+     *
+     * <p>Deliberately <em>not</em> a diagram. The page already draws progress bars;
+     * an illustration of progress bars sitting inside them reads as interface rather
+     * than as a downloaded file, which is the one thing this needs to look like.
+     *
+     * <p>It is also its own proof. PNG is compressed, so a range written to the wrong
+     * offset does not produce a tidy visible seam - it corrupts the stream and the
+     * file stops decoding altogether. Seeing any picture at all therefore means every
+     * byte arrived where it belonged; the hash underneath only confirms it.
+     */
     private static void draw(Graphics2D g, int w, int h) {
-        g.setPaint(new GradientPaint(0, 0, INK, w, h, INK_2));
-        g.fillRect(0, 0, w, h);
+        // Three stops, deep blue through teal to amber, walked smoothly by the field.
+        final Color[] stops = { new Color(0x10243A), TEAL, AMBER };
 
-        double unit = h / 100.0;          // everything scales with the canvas
-        int left = (int) (unit * 10);
-        int barWidth = (int) (w - unit * 20);
+        for (int y = 0; y < h; y++) {
+            double v = y / (double) h;
+            for (int x = 0; x < w; x++) {
+                double u = x / (double) w;
 
-        // Title
-        g.setColor(PAPER);
-        g.setFont(new Font("SansSerif", Font.BOLD, (int) (unit * 9)));
-        g.drawString("Concurrency with", left, (int) (unit * 20));
-        g.setColor(TEAL);
-        g.setFont(new Font("SansSerif", Font.BOLD, (int) (unit * 13)));
-        g.drawString("CompletableFuture", left, (int) (unit * 34));
+                // Interfering waves: cheap, smooth, and with no flat regions.
+                double a = Math.sin((u * 5.0 + v * 2.0) * Math.PI);
+                double b = Math.sin((u * 2.5 - v * 4.5) * Math.PI + 1.7);
+                double c = Math.sin(Math.hypot(u - 0.52, v - 0.44) * 7.5 * Math.PI);
+                // A finer layer, so the picture has texture up close rather than
+                // reading as soft blobs - and so it compresses less predictably.
+                double d = Math.sin((u * 21.0 + v * 13.0) * Math.PI) * 0.22;
+                double t = (a + b + c) / 3.0 + d;          // roughly -1 .. 1
+                t = Math.max(0, Math.min(1, (t + 1) / 2));  // 0 .. 1
 
-        // One long bar: the sequential round, one thread, all the way across.
-        g.setColor(SLATE);
-        g.setFont(new Font("SansSerif", Font.PLAIN, (int) (unit * 4)));
-        g.drawString("1 connection", left, (int) (unit * 48));
-        g.setColor(new Color(0x0D1F31));
-        g.fillRoundRect(left, (int) (unit * 51), barWidth, (int) (unit * 5),
-                (int) unit, (int) unit);
-        g.setColor(SLATE);
-        // Part-filled: the single connection is still going.
-        g.fillRoundRect(left, (int) (unit * 51), (int) (barWidth * 0.34), (int) (unit * 5),
-                (int) unit, (int) unit);
-
-        // Eight short bars: the concurrent round, all in flight at once.
-        g.setColor(TEAL);
-        g.drawString("8 connections", left, (int) (unit * 66));
-        int gap = (int) (unit * 1.2);
-        int slice = (barWidth - gap * 7) / 8;
-        for (int i = 0; i < 8; i++) {
-            int x = left + i * (slice + gap);
-            g.setColor(new Color(0x0D1F31));
-            g.fillRoundRect(x, (int) (unit * 69), slice, (int) (unit * 5),
-                    (int) unit, (int) unit);
-            g.setColor(TEAL);
-            // All eight already finished, in the time the one above is still running.
-            g.fillRoundRect(x, (int) (unit * 69), slice, (int) (unit * 5),
-                    (int) unit, (int) unit);
+                g.setColor(ramp(stops, t));
+                g.fillRect(x, y, 1, 1);
+            }
         }
 
-        g.setColor(AMBER);
-        g.setFont(new Font("SansSerif", Font.PLAIN, (int) (unit * 3.6)));
-        g.drawString("Same bytes. Same hash. A fraction of the time.",
-                left, (int) (unit * 86));
+        // A quiet caption, small enough that it never reads as interface.
+        double unit = h / 100.0;
+        g.setColor(new Color(255, 255, 255, 190));
+        g.setFont(new Font("SansSerif", Font.PLAIN, (int) (unit * 2.6)));
+        g.drawString("concurrency-demo.onrender.com", (int) (unit * 4), (int) (h - unit * 4));
+    }
 
-        g.setColor(SLATE);
-        g.setFont(new Font("SansSerif", Font.PLAIN, (int) (unit * 2.8)));
-        g.drawString("github.com/techadnank9/completablefuture-demo", left, (int) (unit * 93));
+    /** Smooth interpolation across a list of colour stops. */
+    private static Color ramp(Color[] stops, double t) {
+        t = Math.max(0, Math.min(1, t));
+        double scaled = t * (stops.length - 1);
+        int i = (int) Math.min(scaled, stops.length - 2);
+        double f = scaled - i;
+        Color a = stops[i], b = stops[i + 1];
+        return new Color(
+                (int) Math.round(a.getRed()   + (b.getRed()   - a.getRed())   * f),
+                (int) Math.round(a.getGreen() + (b.getGreen() - a.getGreen()) * f),
+                (int) Math.round(a.getBlue()  + (b.getBlue()  - a.getBlue())  * f));
     }
 
     /**

@@ -22,15 +22,14 @@
   .sub{color:var(--muted);margin:0;max-width:62ch;font-size:15px}
 
   /* ── the file, in the middle ───────────────────────────────── */
-  .source{
-    margin:26px auto 0;max-width:430px;background:var(--card);
-    border:1px solid var(--line);border-radius:12px;padding:16px;text-align:center;
-  }
-  .source img{width:100%;border-radius:7px;display:block;background:var(--track)}
-  .source .meta{margin-top:10px;font-family:var(--mono);font-size:12px;color:var(--muted)}
-  .source .meta b{color:var(--text);font-weight:600}
-  .srclabel{font-size:11px;letter-spacing:.09em;text-transform:uppercase;
-            color:var(--muted);margin:0 0 10px}
+  .filechip{display:flex;align-items:center;gap:13px;max-width:400px;margin:24px auto 0;
+    background:var(--card);border:1px solid var(--line);border-radius:10px;padding:11px 14px}
+  .filechip img{width:78px;height:44px;object-fit:cover;border-radius:5px;flex:none;
+                background:var(--track)}
+  .filechip .n{font-family:var(--mono);font-size:13.5px;color:var(--text);font-weight:600}
+  .filechip .m{font-family:var(--mono);font-size:11.5px;color:var(--muted);margin-top:3px}
+  .droplab{font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);
+           margin:16px 0 6px;font-weight:600}
 
   .split{display:flex;justify-content:center;align-items:center;gap:10px;
          color:var(--muted);font-size:12px;margin:14px 0 4px;font-family:var(--mono)}
@@ -94,7 +93,11 @@
   .verdict .big{font-size:26px;font-weight:700;margin:0 0 8px}
   .verdict .big .x{color:var(--teal)}
   .verdict p{margin:0;color:var(--muted);font-size:14px}
-  .hashes{margin-top:12px;font-family:var(--mono);font-size:12.5px;color:var(--muted)}
+  .proof{margin-top:14px;background:#12333a;border:1px solid #1d5a52;border-radius:9px;padding:13px 16px}
+  .proofline{margin:0;font-size:15px;font-weight:650;color:var(--teal)}
+  .proof.bad{background:#3a1a18;border-color:#7a2f28}
+  .proof.bad .proofline{color:var(--red)}
+  .hashes{margin:7px 0 0;font-family:var(--mono);font-size:12.5px;color:var(--muted)}
   .hashes b{color:var(--text);font-weight:600}
   .ok{color:var(--teal);font-weight:700}
   .bad{color:var(--red);font-weight:700}
@@ -122,18 +125,22 @@
 
   <h1>One file. Two ways. <span class="accent">Same moment.</span></h1>
   <p class="sub">
-    Both sides below download the identical image from this server at the same
-    instant — the left over a single connection, the right split into byte ranges
-    fetched in parallel. When each finishes you can open the file it produced.
+    Both sides fetch the one file above at the same instant — the left over a single
+    connection, the right split into byte ranges in parallel. Each ends up with its own
+    copy, which you can open or save. <b>They should be identical; that is the point.</b>
+    PNG is compressed, so a range written to the wrong offset would not decode at all —
+    seeing a picture here means every byte arrived where it belonged.
   </p>
 
-  <div class="source">
-    <p class="srclabel">The file being downloaded</p>
-    <img id="srcimg" alt="The image both sides will download" />
-    <p class="meta"><b id="srcname">concurrency.png</b> · <span id="srcsize">…</span> · image/png</p>
+  <div class="filechip">
+    <img id="srcimg" alt="thumbnail of the file being downloaded" />
+    <div>
+      <div class="n" id="srcname">concurrency.png</div>
+      <div class="m"><span id="srcsize">…</span> · image/png</div>
+    </div>
   </div>
 
-  <div class="split"><span class="arm"></span>downloaded two ways<span class="arm"></span></div>
+  <div class="split"><span class="arm"></span>this one file, fetched two ways<span class="arm"></span></div>
 
   <div class="controls">
     <button class="run" id="run">▶ Start the race</button>
@@ -158,7 +165,8 @@
       <div class="bigclock" id="seqClock">0.0s</div>
       <div class="pctline" id="seqPct">waiting…</div>
       <span class="bar"><span class="fill s" id="seqFill"></span></span>
-      <div class="drop" id="seqDrop">the file will appear here</div>
+      <p class="droplab">the file this side produced</p>
+      <div class="drop" id="seqDrop">nothing yet</div>
       <div class="openrow" id="seqOpen"></div>
     </section>
 
@@ -170,7 +178,8 @@
       <div class="pctline" id="conPct">waiting…</div>
       <span class="bar"><span class="fill c" id="conFill"></span></span>
       <div class="mini" id="mini"></div>
-      <div class="drop" id="conDrop">the file will appear here</div>
+      <p class="droplab">the file this side produced</p>
+      <div class="drop" id="conDrop">nothing yet</div>
       <div class="openrow" id="conOpen"></div>
     </section>
   </div>
@@ -178,9 +187,9 @@
   <section class="verdict" id="verdict">
     <p class="big"><span class="x" id="vSpeed">—</span> <span id="vWord">faster</span></p>
     <p id="vText">—</p>
-    <div class="hashes">
-      SHA-256 &nbsp; left <b id="vSeqSha">—</b> &nbsp;·&nbsp; right <b id="vConSha">—</b>
-      &nbsp; <span id="vMatch"></span>
+    <div class="proof" id="vProof">
+      <p class="proofline" id="vMatch">—</p>
+      <p class="hashes">SHA-256 &nbsp; left <b id="vSeqSha">—</b> &nbsp;·&nbsp; right <b id="vConSha">—</b></p>
     </div>
     <table class="hist" id="histTable" style="display:none">
       <tr><th>Connections</th><th>Time</th><th>Speed</th><th>vs 1</th></tr>
@@ -244,7 +253,7 @@ function clock(el){
     const head = await fetch(FILE, { method:'HEAD', cache:'no-store' });
     total = Number(head.headers.get('content-length')) || 0;
     $('srcsize').textContent = human(total);
-    $('srcimg').src = '/preview.png';             // unthrottled thumbnail, not the 8 MB original
+    $('srcimg').src = '/preview.png?v=' + total;  // unthrottled thumbnail, keyed to the file
     $('srcname').textContent = FILE.replace('/','');
   }catch(e){ $('srcsize').textContent = 'unavailable'; }
 })();
@@ -383,21 +392,28 @@ $('run').addEventListener('click', async () => {
       `Identical ${human(total)} either way.`;
     $('vSeqSha').textContent = seqSha.slice(0,4)+'…'+seqSha.slice(-4);
     $('vConSha').textContent = conSha.slice(0,4)+'…'+conSha.slice(-4);
-    $('vMatch').innerHTML = same
-      ? '<span class="ok">✓ identical</span>'
-      : '<span class="bad">✗ differ</span>';
+    $('vMatch').textContent = same
+      ? '✓ Both sides produced the very same file, byte for byte.'
+      : '✗ The two files differ — a range landed in the wrong place.';
+    $('vProof').className = same ? 'proof' : 'proof bad';
     $('verdict').style.display = 'block';
 
-    // Racing shares one uplink. If the two sides together needed more bandwidth
-    // than the link could give, they fought each other and the numbers understate
-    // the effect - say so rather than quietly reporting a bad measurement.
+    // The sides share one client. If together they moved far less than the server
+    // was willing to give, something on this end capped them - say which, rather
+    // than quietly reporting a measurement that understates the effect.
     const neededMbps = 0.4 * (n + 1);
     const actualMbps = ((total/1048576)/(seqMs/1000)) + ((total/1048576)/(conMs/1000));
     if(actualMbps < neededMbps * 0.75){
-      $('warn').textContent =
-        `Heads up: both sides together wanted about ${neededMbps.toFixed(1)} MB/s but only reached ` +
-        `${actualMbps.toFixed(1)} MB/s, so your connection — not the server — was the limit here. ` +
-        `The gap would be wider on a faster link, or with fewer connections on the right.`;
+      // Browsers allow only ~6 sockets per origin on HTTP/1.1, so asking for more
+      // ranges than that simply queues them. HTTP/2 multiplexes and does not.
+      const capped = n + 1 > 6 && location.protocol === 'http:';
+      $('warn').textContent = capped
+        ? `Note: the server offered about ${neededMbps.toFixed(1)} MB/s but only ${actualMbps.toFixed(1)} MB/s arrived. ` +
+          `Browsers open roughly 6 connections per origin on HTTP/1.1, so ${n} ranges plus the single ` +
+          `stream could not all run at once — the extra ones queued. Which is the same lesson as the ` +
+          `server side: parallelism beyond what the channel allows buys you nothing.`
+        : `Note: the server offered about ${neededMbps.toFixed(1)} MB/s but only ${actualMbps.toFixed(1)} MB/s arrived, ` +
+          `so your own connection — not the server — was the limit here. The gap would be wider on a faster link.`;
       $('warn').style.display = 'block';
     }
 

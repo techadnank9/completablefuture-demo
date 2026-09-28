@@ -138,7 +138,7 @@ public final class LocalFileServer implements AutoCloseable {
             return;
         }
         exchange.getResponseHeaders().add("Content-Type", "image/jpeg");
-        exchange.getResponseHeaders().add("Cache-Control", "public, max-age=3600");
+        exchange.getResponseHeaders().add("Cache-Control", "public, max-age=300");
         exchange.sendResponseHeaders(200, thumb.length);
         try (OutputStream out = exchange.getResponseBody()) {
             out.write(thumb);
