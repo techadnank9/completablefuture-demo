@@ -364,13 +364,27 @@ only the wall-clock cost of the suite changes.
 
 ## Slides
 
-`CompletableFuture-Presentation.pptx` — 11 slides, with speaker notes on every one,
-built around the numbers this code actually produced. The structure mirrors the
-talk: the problem, the API, live demo 1, results, resource management, live demo 2,
-composition, resilience, takeaways.
+`CompletableFuture-Presentation.pptx` — 10 slides, speaker notes on every one.
+Self-contained: every number and result is on a slide, so the live demo is a bonus
+rather than a dependency. If the wifi dies, the talk still works.
 
-Re-measure on the presentation laptop and update the figures on slides 6, 7 and 8
-if they differ noticeably from the ones shipped here.
+1. Title
+2. The problem — a blocked thread is asleep, not slow (0% CPU for 20 seconds)
+3. Why the API looks like it does — `Future` (2004) vs `CompletableFuture` (2014)
+4. The shape — fan out, fan in, and why no lock is needed
+5. Measured — 20.33 s vs 3.35 s, matching hashes
+6. Sizing the pool — the throughput curve flattening
+7. `thenCompose` vs `thenCombine`
+8. Resilience — three failure modes, three tools
+9. The traps — the four things tutorials leave out
+10. Takeaways
+
+Slide 9 is the one worth rehearsing: the common-pool default, `thenApply` making no
+promise about which thread runs it, `allOf` waiting for every branch even after one
+has failed, and `orTimeout` giving up without cancelling anything.
+
+Re-measure on the presentation laptop and update the figures on slides 5 and 6 if
+they differ noticeably from the ones shipped here.
 
 ---
 
