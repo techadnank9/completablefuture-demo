@@ -149,6 +149,25 @@ curl -o /dev/null -D - -r 0-1023 <url>     # expect 206 and Content-Range
 
 ---
 
+## The live demo page
+
+**https://concurrency-demo.onrender.com** — open it and press the button.
+
+The page runs the identical comparison in the browser against the same throttled
+server: one plain `fetch` for round 1, then N parallel `fetch` calls with `Range`
+headers joined by `Promise.all` for round 2, reassembled into one buffer and
+hashed with `crypto.subtle`. Live per-chunk progress bars, a running clock, the
+SHA-256 match, and the speedup.
+
+The chunk selector (1 / 2 / 4 / 8 / 16) builds a history table as you go, so the
+`--compare-pools` lesson becomes something the audience can watch arrive: the gain
+stops coming once bandwidth, not concurrency, is the limit.
+
+It is the same idea as the Java code, in the language the browser speaks —
+`supplyAsync` + `allOf` there, `fetch` + `Promise.all` here.
+
+---
+
 ## Hosting a real target: `serve` mode
 
 The same `LocalFileServer` that powers the offline demo can run as a long-lived

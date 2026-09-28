@@ -97,6 +97,9 @@ public final class LocalFileServer implements AutoCloseable {
         // Liveness probe for the hosting platform. Registered as a longer prefix than
         // "/", so it wins the match and a health check never downloads the file.
         http.createContext("/health", LocalFileServer::handleHealth);
+        http.createContext("/info", instance::handleInfo);
+        // The interactive page. It runs the same comparison in the browser, against
+        // this same throttled server, so anyone with the URL can watch it happen.
         http.createContext("/", instance::handleRoot);
         http.start();
         return instance;
@@ -127,10 +130,46 @@ public final class LocalFileServer implements AutoCloseable {
     }
 
     /**
-     * A short description of what is being served, so hitting the bare URL in a
-     * browser explains itself instead of dumping several megabytes at the visitor.
+     * Serves the interactive demo page bundled in the jar.
+     *
+     * <p>Falls back to the plain-text description if the resource is missing, so a
+     * stripped-down build still explains itself rather than 500-ing.
      */
     private void handleRoot(HttpExchange exchange) throws IOException {
+        if (!"/".equals(exchange.getRequestURI().getPath())) {
+            // Unknown path: not the file, not the page.
+            exchange.sendResponseHeaders(404, -1);
+            exchange.close();
+            return;
+        }
+        byte[] page = readPage();
+        if (page == null) {
+            handleInfo(exchange);
+            return;
+        }
+        exchange.getResponseHeaders().add("Content-Type", "text/html; charset=utf-8");
+        exchange.getResponseHeaders().add("Cache-Control", "no-cache");
+        exchange.sendResponseHeaders(200, page.length);
+        try (OutputStream out = exchange.getResponseBody()) {
+            out.write(page);
+        }
+        exchange.close();
+    }
+
+    /** Reads the bundled page, or {@code null} if it is not on the classpath. */
+    private static byte[] readPage() {
+        try (java.io.InputStream in = LocalFileServer.class.getResourceAsStream("/web/index.html")) {
+            return in == null ? null : in.readAllBytes();
+        } catch (IOException e) {
+            return null;
+        }
+    }
+
+    /**
+     * Plain-text description of what is being served - handy from curl, and the
+     * fallback when the bundled page is unavailable.
+     */
+    private void handleInfo(HttpExchange exchange) throws IOException {
         String body = "CompletableFuture demo file server\n\n"
                 + "file            /" + fileName + "\n"
                 + "size            " + fileSize + " bytes\n"
@@ -155,6 +194,8 @@ public final class LocalFileServer implements AutoCloseable {
             String method = exchange.getRequestMethod();
             exchange.getResponseHeaders().add("Accept-Ranges", "bytes");
             exchange.getResponseHeaders().add("Content-Type", "application/octet-stream");
+            // Without this the browser would serve round 2 from cache and "win" instantly.
+            exchange.getResponseHeaders().add("Cache-Control", "no-store");
 
             if ("HEAD".equalsIgnoreCase(method)) {
                 handleHead(exchange);

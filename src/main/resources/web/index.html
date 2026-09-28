@@ -1,0 +1,419 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Concurrency with CompletableFuture</title>
+<style>
+  :root{
+    --ink:#0E1B2A; --card:#16293D; --line:#22405C;
+    --teal:#00A896; --teal-dim:#0c6b62; --amber:#F2A65A; --slate:#7A8FA3;
+    --text:#E8EEF3; --muted:#8FA3B5;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--ink); color:var(--text);
+    font-family:var(--sans); line-height:1.5;
+    padding:40px 16px 80px;
+  }
+  .wrap{max-width:900px;margin:0 auto}
+
+  header{margin-bottom:28px}
+  h1{font-size:clamp(26px,4.5vw,38px);margin:0 0 10px;letter-spacing:-.02em}
+  h1 .accent{color:var(--teal)}
+  .sub{color:var(--muted);font-size:16px;margin:0;max-width:60ch}
+
+  .controls{
+    display:flex;flex-wrap:wrap;gap:14px;align-items:center;
+    margin:26px 0 8px;
+  }
+  button.run{
+    background:var(--teal);color:#04201c;border:0;border-radius:8px;
+    padding:13px 22px;font-size:16px;font-weight:650;cursor:pointer;
+    font-family:inherit;transition:filter .15s;
+  }
+  button.run:hover:not(:disabled){filter:brightness(1.12)}
+  button.run:disabled{opacity:.5;cursor:not-allowed}
+
+  .chunkpick{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .chunkpick span{color:var(--muted);font-size:14px}
+  .chip{
+    background:transparent;color:var(--muted);border:1px solid var(--line);
+    border-radius:6px;padding:7px 13px;font-size:14px;cursor:pointer;
+    font-family:var(--mono);transition:all .15s;
+  }
+  .chip:hover:not(:disabled){border-color:var(--teal);color:var(--text)}
+  .chip[aria-pressed="true"]{background:var(--teal);color:#04201c;border-color:var(--teal);font-weight:700}
+  .chip:disabled{opacity:.4;cursor:not-allowed}
+
+  .hint{color:var(--muted);font-size:13px;margin:4px 0 0}
+
+  .lane{
+    background:var(--card);border:1px solid var(--line);border-radius:12px;
+    padding:18px 20px;margin-top:18px;
+  }
+  .lane h2{
+    font-size:14px;margin:0 0 3px;font-weight:650;letter-spacing:.04em;
+    text-transform:uppercase;
+  }
+  .lane .note{color:var(--muted);font-size:13px;margin:0 0 14px}
+  .lane.seq h2{color:var(--slate)}
+  .lane.con h2{color:var(--teal)}
+
+  .row{display:flex;align-items:center;gap:12px;margin:7px 0;font-family:var(--mono);font-size:12px}
+  .row .lbl{width:74px;color:var(--muted);flex:none}
+  .bar{
+    display:block;flex:1;height:14px;background:#0d1f31;border-radius:4px;
+    overflow:hidden;position:relative;
+  }
+  .fill{display:block;height:100%;width:0;border-radius:4px;transition:width .12s linear}
+  .fill.s{background:var(--slate)}
+  .fill.c{background:var(--teal)}
+  .row .pct{width:46px;text-align:right;color:var(--muted);flex:none}
+  .row.total{margin-top:12px;padding-top:12px;border-top:1px solid var(--line);font-size:13px}
+  .row.total .lbl{color:var(--text);font-weight:700}
+  .row.total .pct{color:var(--text)}
+  .clock{width:64px;text-align:right;flex:none;font-variant-numeric:tabular-nums}
+  .lane.seq .clock{color:var(--slate)}
+  .lane.con .clock{color:var(--teal)}
+
+  table.result{
+    width:100%;border-collapse:collapse;margin-top:6px;font-size:15px;
+  }
+  table.result td,table.result th{padding:9px 6px;text-align:left;border-bottom:1px solid var(--line)}
+  table.result th{color:var(--muted);font-weight:500;font-size:13px}
+  table.result td:first-child{color:var(--muted);width:34%}
+  table.result .s{color:var(--slate);font-family:var(--mono);font-size:14px}
+  table.result .c{color:var(--teal);font-family:var(--mono);font-size:14px}
+  .speedup{font-size:30px;font-weight:700;color:var(--teal);font-family:var(--sans)}
+  .match{color:var(--teal);font-weight:650}
+  .nomatch{color:#E4572E;font-weight:650}
+
+  .hist td,.hist th{font-family:var(--mono);font-size:13px}
+  .hist .best{color:var(--amber)}
+
+  .why{margin-top:34px;border-top:1px solid var(--line);padding-top:22px}
+  .why h3{font-size:15px;margin:0 0 10px}
+  .why p{color:var(--muted);font-size:14px;margin:0 0 12px;max-width:72ch}
+  .why code{font-family:var(--mono);color:var(--teal);font-size:13px}
+  .why a{color:var(--teal)}
+  .err{color:#E4572E;font-size:14px;margin-top:12px}
+  .hidden{display:none}
+
+  /* On a phone the fixed label/percent/clock columns squeeze the bar itself,
+     which is the one thing worth looking at. Give it back some room. */
+  @media (max-width:560px){
+    body{padding:26px 14px 60px}
+    .row{gap:8px;font-size:11px}
+    .row .lbl{width:56px}
+    .row .pct{width:36px}
+    .clock{width:50px}
+    button.run{width:100%}
+    .chunkpick{width:100%}
+    table.result td:first-child{width:38%}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <h1>Downloading one file, <span class="accent">two ways</span></h1>
+    <p class="sub">
+      The same 8&nbsp;MB file, fetched twice from this server: once over a single
+      connection, then again split into byte ranges fetched in parallel. Same bytes,
+      same SHA&#8209;256 — very different clock.
+    </p>
+  </header>
+
+  <div class="controls">
+    <button class="run" id="run">▶ Run the comparison</button>
+    <div class="chunkpick">
+      <span>parallel chunks</span>
+      <button class="chip" data-n="1">1</button>
+      <button class="chip" data-n="2">2</button>
+      <button class="chip" data-n="4">4</button>
+      <button class="chip" data-n="8" aria-pressed="true">8</button>
+      <button class="chip" data-n="16">16</button>
+    </div>
+  </div>
+  <p class="hint" id="hint">
+    Round 1 takes about 20 seconds on purpose — this server limits every single
+    connection to 0.4&nbsp;MB/s, exactly like a real origin does.
+  </p>
+  <p class="err hidden" id="err"></p>
+
+  <section class="lane seq">
+    <h2>Round 1 · Sequential</h2>
+    <p class="note">One connection. One stream. Blocked, waiting, from start to finish.</p>
+    <div class="row total">
+      <span class="lbl">1 stream</span>
+      <span class="bar"><span class="fill s" id="seqfill"></span></span>
+      <span class="pct" id="seqpct">0%</span>
+      <span class="clock" id="seqclock">0.0s</span>
+    </div>
+  </section>
+
+  <section class="lane con">
+    <h2>Round 2 · Concurrent</h2>
+    <p class="note">One request per byte range, all in flight at once, reassembled in order.</p>
+    <div id="chunks"></div>
+    <div class="row total">
+      <span class="lbl">total</span>
+      <span class="bar"><span class="fill c" id="confill"></span></span>
+      <span class="pct" id="conpct">0%</span>
+      <span class="clock" id="conclock">0.0s</span>
+    </div>
+  </section>
+
+  <section class="lane hidden" id="resultcard">
+    <h2 style="color:var(--text)">Result</h2>
+    <table class="result">
+      <tr><th></th><th>Sequential</th><th id="conhead">Concurrent</th></tr>
+      <tr><td>Time</td><td class="s" id="rSeqTime">—</td><td class="c" id="rConTime">—</td></tr>
+      <tr><td>Average speed</td><td class="s" id="rSeqSpeed">—</td><td class="c" id="rConSpeed">—</td></tr>
+      <tr><td>Connections</td><td class="s" id="rSeqConn">1</td><td class="c" id="rConConn">—</td></tr>
+      <tr><td>SHA-256</td><td class="s" id="rSeqSha">—</td><td class="c" id="rConSha">—</td></tr>
+      <tr><td>Identical?</td><td colspan="2" id="rMatch">—</td></tr>
+      <tr><td>Speedup</td><td colspan="2"><span class="speedup" id="rSpeedup">—</span></td></tr>
+    </table>
+  </section>
+
+  <section class="lane hidden" id="histcard">
+    <h2 style="color:var(--amber)">Every run so far</h2>
+    <p class="note">
+      Try 1, then 2, 4, 8, 16. Watch the gain stop arriving — past a point the
+      bottleneck stops being concurrency, and extra connections buy nothing.
+    </p>
+    <table class="result hist">
+      <tr><th>Chunks</th><th>Time</th><th>Speed</th><th>vs 1 chunk</th></tr>
+      <tbody id="histbody"></tbody>
+    </table>
+  </section>
+
+  <section class="why">
+    <h3>What you just watched</h3>
+    <p>
+      Nothing here is faster at computing. Both rounds move the identical 8&nbsp;MB.
+      The single connection spends nearly all of its life <em>blocked</em>, waiting on
+      the network while doing no work at all. The concurrent round simply arranges for
+      several connections to do that waiting at the same time.
+    </p>
+    <p>
+      The Java version of this is the real project: one
+      <code>CompletableFuture.supplyAsync</code> per chunk on a dedicated executor,
+      joined with <code>allOf(...).thenApply(...)</code>, each chunk writing straight
+      into its own offset of one pre-allocated file. The ranges never overlap, so there
+      is no lock anywhere — and that is why the two SHA&#8209;256 hashes above match.
+    </p>
+    <p>
+      This page does the same thing with <code>fetch</code> and <code>Promise.all</code>,
+      against the same throttled server.
+      &nbsp;<a href="https://github.com/techadnank9/completablefuture-demo">Source on GitHub →</a>
+    </p>
+  </section>
+
+</div>
+
+<script>
+const FILE = '/sample_video.mp4';
+const $ = id => document.getElementById(id);
+let chunkCount = 8;
+const history = [];
+
+// ── chunk-count chips ────────────────────────────────────────────────
+document.querySelectorAll('.chip').forEach(chip => {
+  chip.addEventListener('click', () => {
+    document.querySelectorAll('.chip').forEach(c => c.setAttribute('aria-pressed','false'));
+    chip.setAttribute('aria-pressed','true');
+    chunkCount = Number(chip.dataset.n);
+  });
+});
+
+function setBusy(busy){
+  $('run').disabled = busy;
+  document.querySelectorAll('.chip').forEach(c => c.disabled = busy);
+  $('run').textContent = busy ? 'Running…' : '▶ Run the comparison';
+}
+function fmtTime(ms){ return ms < 1000 ? Math.round(ms)+' ms' : (ms/1000).toFixed(2)+' s'; }
+function fmtSpeed(bytes, ms){ return ((bytes/1048576)/(ms/1000)).toFixed(2)+' MB/s'; }
+function shortSha(hex){ return hex.slice(0,4)+'…'+hex.slice(-4); }
+
+async function sha256Hex(buf){
+  const d = await crypto.subtle.digest('SHA-256', buf);
+  return [...new Uint8Array(d)].map(b => b.toString(16).padStart(2,'0')).join('');
+}
+
+// A live clock so the wait is legible rather than just slow.
+function startClock(el){
+  const t0 = performance.now();
+  const id = setInterval(() => { el.textContent = ((performance.now()-t0)/1000).toFixed(1)+'s'; }, 100);
+  return () => { clearInterval(id); el.textContent = ((performance.now()-t0)/1000).toFixed(1)+'s'; };
+}
+
+function bust(){ return FILE + '?r=' + Math.random().toString(36).slice(2); }
+
+// ── Round 1: one connection, straight through ────────────────────────
+async function downloadSequential(total, onProgress){
+  const res = await fetch(bust(), { cache:'no-store' });
+  if(!res.ok) throw new Error('sequential request failed: HTTP '+res.status);
+  const reader = res.body.getReader();
+  const out = new Uint8Array(total);
+  let at = 0;
+  for(;;){
+    const {done, value} = await reader.read();
+    if(done) break;
+    out.set(value, at);
+    at += value.length;
+    onProgress(at);
+  }
+  return out;
+}
+
+// ── Round 2: one request per range, all at once ──────────────────────
+// The browser mirror of the Java fan-out: build every request first, let them
+// run together, then join. Each one writes into its own slice of one buffer.
+async function downloadConcurrent(total, n, onChunk){
+  const base = Math.floor(total / n);
+  const out = new Uint8Array(total);
+  const tasks = [];
+
+  for(let i = 0; i < n; i++){
+    const start = i * base;
+    const end = (i === n-1) ? total-1 : start + base - 1;   // last chunk takes the remainder
+    tasks.push((async () => {
+      const res = await fetch(bust(), {
+        cache:'no-store',
+        headers:{ 'Range': `bytes=${start}-${end}` }
+      });
+      if(res.status !== 206) throw new Error(`chunk ${i}: expected 206, got ${res.status}`);
+      const reader = res.body.getReader();
+      let at = start, got = 0;
+      for(;;){
+        const {done, value} = await reader.read();
+        if(done) break;
+        out.set(value, at);
+        at += value.length;
+        got += value.length;
+        onChunk(i, got, end-start+1);
+      }
+    })());
+  }
+  await Promise.all(tasks);          // ← the allOf(...) of this page
+  return out;
+}
+
+function buildChunkRows(n){
+  const host = $('chunks');
+  host.innerHTML = '';
+  // Above ~12 lanes the individual bars stop being readable; the total tells the story.
+  if(n > 12){
+    host.innerHTML = `<p class="note" style="margin:0 0 4px">${n} connections in flight — see the total below.</p>`;
+    return [];
+  }
+  const fills = [];
+  for(let i = 0; i < n; i++){
+    const row = document.createElement('div');
+    row.className = 'row';
+    row.innerHTML = `<span class="lbl">chunk ${i}</span>
+      <span class="bar"><span class="fill c"></span></span>
+      <span class="pct">0%</span>`;
+    host.appendChild(row);
+    fills.push({ fill: row.querySelector('.fill'), pct: row.querySelector('.pct') });
+  }
+  return fills;
+}
+
+function resetUi(n){
+  $('err').classList.add('hidden');
+  $('resultcard').classList.add('hidden');
+  $('seqfill').style.width = '0'; $('seqpct').textContent = '0%'; $('seqclock').textContent = '0.0s';
+  $('confill').style.width = '0'; $('conpct').textContent = '0%'; $('conclock').textContent = '0.0s';
+  return buildChunkRows(n);
+}
+
+function renderHistory(){
+  if(!history.length) return;
+  $('histcard').classList.remove('hidden');
+  const baseline = history.find(h => h.n === 1);
+  const fastest = Math.min(...history.map(h => h.ms));
+  $('histbody').innerHTML = history.map(h => {
+    const rel = baseline ? (baseline.ms / h.ms).toFixed(1)+'×' : '—';
+    const cls = h.ms === fastest ? ' class="best"' : '';
+    return `<tr${cls}><td>${h.n}</td><td>${fmtTime(h.ms)}</td><td>${fmtSpeed(h.bytes,h.ms)}</td><td>${rel}</td></tr>`;
+  }).join('');
+}
+
+// ── orchestration ────────────────────────────────────────────────────
+$('run').addEventListener('click', async () => {
+  const n = chunkCount;
+  setBusy(true);
+  const fills = resetUi(n);
+  $('conhead').textContent = `Concurrent (${n} chunk${n>1?'s':''})`;
+
+  try{
+    const head = await fetch(FILE, { method:'HEAD', cache:'no-store' });
+    const total = Number(head.headers.get('content-length'));
+    if(!total) throw new Error('server did not report a Content-Length');
+
+    // Round 1
+    let stop = startClock($('seqclock'));
+    const t1 = performance.now();
+    const seqBuf = await downloadSequential(total, got => {
+      const p = got/total;
+      $('seqfill').style.width = (p*100)+'%';
+      $('seqpct').textContent = Math.round(p*100)+'%';
+    });
+    const seqMs = performance.now() - t1;
+    stop();
+
+    // Round 2
+    const progress = new Array(n).fill(0);
+    stop = startClock($('conclock'));
+    const t2 = performance.now();
+    const conBuf = await downloadConcurrent(total, n, (i, got, len) => {
+      progress[i] = got;
+      if(fills[i]){
+        const p = got/len;
+        fills[i].fill.style.width = (p*100)+'%';
+        fills[i].pct.textContent = Math.round(p*100)+'%';
+      }
+      const all = progress.reduce((a,b)=>a+b,0)/total;
+      $('confill').style.width = (all*100)+'%';
+      $('conpct').textContent = Math.round(all*100)+'%';
+    });
+    const conMs = performance.now() - t2;
+    stop();
+
+    const [seqSha, conSha] = await Promise.all([sha256Hex(seqBuf.buffer), sha256Hex(conBuf.buffer)]);
+    const same = seqSha === conSha;
+
+    $('rSeqTime').textContent  = fmtTime(seqMs);
+    $('rConTime').textContent  = fmtTime(conMs);
+    $('rSeqSpeed').textContent = fmtSpeed(total, seqMs);
+    $('rConSpeed').textContent = fmtSpeed(total, conMs);
+    $('rConConn').textContent  = String(n);
+    $('rSeqSha').textContent   = shortSha(seqSha);
+    $('rConSha').textContent   = shortSha(conSha);
+    $('rMatch').innerHTML = same
+      ? '<span class="match">✓ identical — every byte landed where it belonged</span>'
+      : '<span class="nomatch">✗ hashes differ</span>';
+    $('rSpeedup').textContent = (seqMs/conMs).toFixed(1)+'×';
+    $('resultcard').classList.remove('hidden');
+
+    history.push({ n, ms: conMs, bytes: total });
+    history.sort((a,b) => a.n - b.n);
+    renderHistory();
+
+  }catch(e){
+    $('err').textContent = 'Something went wrong: ' + e.message;
+    $('err').classList.remove('hidden');
+  }finally{
+    setBusy(false);
+  }
+});
+</script>
+</body>
+</html>
