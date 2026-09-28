@@ -151,7 +151,12 @@ curl -o /dev/null -D - -r 0-1023 <url>     # expect 206 and Content-Range
 
 ## The live demo page
 
-**https://concurrency-demo.onrender.com** — open it and press the button.
+**https://concurrency-demo.onrender.com** — pick a file and press the button.
+
+The page serves a small library: two generated photographs (8.97 MB and 4.64 MB)
+and a real 720p H.264 video (5.66 MB). Choose one, and both sides fetch it at the
+same instant — the left over a single connection, the right split into byte ranges
+in parallel. Each side delivers its own copy, which you can open, play or save.
 
 The page runs the identical comparison in the browser against the same throttled
 server: one plain `fetch` for round 1, then N parallel `fetch` calls with `Range`
@@ -372,12 +377,15 @@ rather than a dependency. If the wifi dies, the talk still works.
 2. The problem — a blocked thread is asleep, not slow (0% CPU for 20 seconds)
 3. Why the API looks like it does — `Future` (2004) vs `CompletableFuture` (2014)
 4. The shape — fan out, fan in, and why no lock is needed
-5. Measured — 20.33 s vs 3.35 s, matching hashes
+5. Measured — 21.32 s vs 2.61 s on the 8.97 MB photo, matching hashes
 6. Sizing the pool — the throughput curve flattening
 7. `thenCompose` vs `thenCombine`
 8. Resilience — three failure modes, three tools
 9. The traps — the four things tutorials leave out
 10. Takeaways
+
+The final slide carries a QR code for the live demo, so the room can scan it and
+race a file on their own phones while you take questions.
 
 Slide 9 is the one worth rehearsing: the common-pool default, `thenApply` making no
 promise about which thread runs it, `allOf` waiting for every branch even after one
