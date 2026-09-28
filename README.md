@@ -159,7 +159,7 @@ the speedup**:
 java demo.App serve --port 18080 --size-mb 8 --throttle-mbps 0.4
 ```
 
-```
+```bash
 java demo.App download --url https://concurrency-demo.onrender.com/sample_video.mp4
 ```
 
@@ -191,22 +191,35 @@ Speedup                               8.1x
 Both are environment variables, so they can be retuned from the Render dashboard
 after testing on the real network — no redeploy needed.
 
-### Deploying to Render
+### Deployed
 
-`render.yaml` and `Dockerfile` are in the repo. In Render: **New → Blueprint →
-pick this repo**. It reads the blueprint and creates the service at
-`https://concurrency-demo.onrender.com`.
+**Live at https://concurrency-demo.onrender.com** (Docker, Render Starter).
 
-Then confirm range support survives Render's proxy before relying on it:
+Render's proxy passes byte ranges through correctly — confirmed, not assumed:
 
-```bash
-curl -I https://concurrency-demo.onrender.com/sample_video.mp4
-curl -o /dev/null -D - -r 0-1023 https://concurrency-demo.onrender.com/sample_video.mp4
+```
+$ curl -o /dev/null -D - -r 0-1023 https://concurrency-demo.onrender.com/sample_video.mp4
+HTTP/2 206
+content-range: bytes 0-1023/8388608
 ```
 
-Expect `Accept-Ranges: bytes` on the first and `206` plus `Content-Range` on the
-second. If the second returns `200`, the proxy is stripping ranges and real mode
-will refuse to run the concurrent round — present from local mode instead.
+Measured over the real internet against that service:
+
+```
+Time              20.12 s             3.85 s
+Avg speed         0.4 MB/s            2.1 MB/s
+Threads used      1                   8
+SHA-256           7522...61f6         7522...61f6   identical
+Speedup                               5.2x
+```
+
+5.2x rather than the 8.1x seen on localhost, because real network latency and the
+client's own uplink now sit in the path. That gap is worth saying out loud: the
+ceiling is set by whatever the tightest constraint is, and over the internet it is
+no longer purely the server's per-connection limit.
+
+To redeploy from scratch: **New → Blueprint → pick this repo**. Render reads
+`render.yaml`.
 
 Endpoints: `/sample_video.mp4` (the file), `/health` (liveness), `/` (a plain-text
 description of what is being served and at what limit).
