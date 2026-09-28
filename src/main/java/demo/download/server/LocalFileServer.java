@@ -9,129 +9,152 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.io.RandomAccessFile;
 import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
+import java.util.stream.Collectors;
 
 /**
- * A tiny HTTP file server built on the JDK's {@link HttpServer}, serving exactly
- * one file with full byte-range support and a bandwidth limit.
+ * A small HTTP server built on the JDK's {@link HttpServer}, serving a library of
+ * files with full byte-range support and a per-connection bandwidth limit.
  *
- * <p>It exists so the whole download demo runs with <b>no internet connection</b>
- * - the single most important reliability property for a live classroom. It is
- * also honest: it implements the same {@code Accept-Ranges} / {@code 206 Partial
+ * <p>It exists so the whole download demo runs with <b>no internet connection</b>,
+ * the single most important reliability property for a live classroom. It is also
+ * honest: it implements the same {@code Accept-Ranges} / {@code 206 Partial
  * Content} contract that real CDNs use, so the client code under demonstration is
  * exactly the code you would write against the real thing.
  *
- * <p>Supported:
- * <ul>
- *   <li>{@code HEAD} - {@code Content-Length} and {@code Accept-Ranges: bytes}</li>
- *   <li>{@code GET} - whole file, {@code 200}</li>
- *   <li>{@code GET} with {@code Range: bytes=a-b} - {@code 206} plus {@code Content-Range}</li>
- *   <li>Unsatisfiable range - {@code 416} with {@code Content-Range: bytes} + total</li>
- * </ul>
+ * <h2>Why throttle at all?</h2>
+ * On localhost a file copies in well under a second, so both rounds would look
+ * instant and the demo would prove nothing. Real origins limit <em>per
+ * connection</em>, which is precisely why opening several is faster. This
+ * reproduces that offline.
  *
- * <p>The server runs on its own named executor ({@code server-N}) so its threads
- * never compete for the client's download pool - otherwise the measurement would
- * be of our own thread starvation rather than of concurrency.
+ * <p>Server threads live in their own pool so they never compete with the client's
+ * download threads; otherwise the measurement would be of our own thread starvation
+ * rather than of concurrency.
  */
 public final class LocalFileServer implements AutoCloseable {
 
     private final HttpServer server;
     private final ExecutorService serverPool;
-    private final Path file;
-    private final long fileSize;
-    private final String fileName;
+    private final Map<String, LibraryFile> byId = new LinkedHashMap<>();
     private final double perConnectionBytesPerSecond;
     private final ThrottledOutputStream.Limiter globalLimiter;
-    /** Small unthrottled preview of the served image, or {@code null} if not an image. */
-    private volatile byte[] thumbnail;
+    private final String singleFileName;      // non-null only in single-file mode
 
-    private LocalFileServer(HttpServer server, ExecutorService serverPool, Path file, long fileSize,
-                            double perConnectionBytesPerSecond,
-                            ThrottledOutputStream.Limiter globalLimiter) {
+    private LocalFileServer(HttpServer server, ExecutorService serverPool,
+                            List<LibraryFile> files, double perConnectionBytesPerSecond,
+                            ThrottledOutputStream.Limiter globalLimiter, String singleFileName) {
         this.server = server;
         this.serverPool = serverPool;
-        this.file = file;
-        this.fileSize = fileSize;
-        this.fileName = file.getFileName().toString();
         this.perConnectionBytesPerSecond = perConnectionBytesPerSecond;
         this.globalLimiter = globalLimiter;
+        this.singleFileName = singleFileName;
+        files.forEach(f -> byId.put(f.id(), f));
     }
 
     /**
-     * Starts a server on a random free port, bound to loopback. Used by the demo.
-     *
-     * @param file                  the single file to serve
-     * @param perConnectionMbps     per-connection ceiling in MB/s; {@code <= 0} means unlimited
-     * @param totalMbps             ceiling shared across all connections in MB/s; {@code <= 0} means unlimited
+     * Single-file mode, on a random loopback port. Used by the offline demo and the
+     * tests: the file is served at {@code /<name>} exactly as before.
      */
-    public static LocalFileServer start(Path file, double perConnectionMbps, double totalMbps) throws IOException {
-        // Port 0 = "pick any free port", so repeated runs never collide.
-        return start(file, perConnectionMbps, totalMbps, "127.0.0.1", 0);
+    public static LocalFileServer start(Path file, double perConnectionMbps, double totalMbps)
+            throws IOException {
+        String name = file.getFileName().toString();
+        LibraryFile single = new LibraryFile(name, name, name, "File",
+                guessContentType(name), file, Files.size(file), null);
+        return start(List.of(single), perConnectionMbps, totalMbps, "127.0.0.1", 0, name);
     }
 
-    /**
-     * Starts a server on an explicit host and port.
-     *
-     * <p>Deployed mode binds {@code 0.0.0.0} and the port the platform hands us in
-     * {@code $PORT}, so the same class that powers the offline demo can also run as
-     * a real public server for {@code --url} mode.
-     */
-    public static LocalFileServer start(Path file, double perConnectionMbps, double totalMbps,
-                                        String host, int port) throws IOException {
-        long size = Files.size(file);
+    /** Library mode: several files, bound to an explicit host and port. */
+    public static LocalFileServer start(List<LibraryFile> files, double perConnectionMbps,
+                                        double totalMbps, String host, int port) throws IOException {
+        return start(files, perConnectionMbps, totalMbps, host, port, null);
+    }
 
+    private static LocalFileServer start(List<LibraryFile> files, double perConnectionMbps,
+                                         double totalMbps, String host, int port,
+                                         String singleFileName) throws IOException {
         HttpServer http = HttpServer.create(new InetSocketAddress(host, port), 0);
-
-        // The server gets its own pool. Client download threads live in a separate
-        // pool, so neither side can starve the other and the timings stay honest.
         ExecutorService pool = Executors2.named("server", 16);
         http.setExecutor(pool);
 
         ThrottledOutputStream.Limiter global =
                 totalMbps > 0 ? ThrottledOutputStream.Limiter.mbPerSecond(totalMbps) : null;
 
-        LocalFileServer instance = new LocalFileServer(http, pool, file, size,
-                perConnectionMbps > 0 ? perConnectionMbps * 1024 * 1024 : 0, global);
+        LocalFileServer instance = new LocalFileServer(http, pool, files,
+                perConnectionMbps > 0 ? perConnectionMbps * 1024 * 1024 : 0, global, singleFileName);
 
-        http.createContext("/" + instance.fileName, instance::handle);
-        // Liveness probe for the hosting platform. Registered as a longer prefix than
-        // "/", so it wins the match and a health check never downloads the file.
-        // Built once at startup and served unthrottled: the page needs to show the
-        // file immediately, and the real one is deliberately slow.
-        try {
-            instance.thumbnail = SampleImage.thumbnail(file, 760);
-        } catch (IOException | RuntimeException e) {
-            instance.thumbnail = null;      // not an image, or unreadable: no preview
-        }
-
-        http.createContext("/preview.png", instance::handlePreview);
+        // Longer prefixes win, so these never collide with the catch-all page route.
         http.createContext("/health", LocalFileServer::handleHealth);
-        http.createContext("/info", instance::handleInfo);
-        // The interactive page. It runs the same comparison in the browser, against
-        // this same throttled server, so anyone with the URL can watch it happen.
+        http.createContext("/api/files", instance::handleList);
+        http.createContext("/files/", instance::handleLibraryFile);
+        http.createContext("/thumb/", instance::handleThumb);
+
+        if (singleFileName != null) {
+            http.createContext("/" + singleFileName, instance::handleSingle);
+        }
         http.createContext("/", instance::handleRoot);
+
         http.start();
         return instance;
     }
 
-    /** The URL the download demo should point at. */
+    /** The URL the offline demo should point at. Single-file mode only. */
     public String url() {
-        return "http://127.0.0.1:" + server.getAddress().getPort() + "/" + fileName;
+        return "http://127.0.0.1:" + server.getAddress().getPort() + "/" + singleFileName;
     }
 
     public int port() {
         return server.getAddress().getPort();
     }
 
+    /** Size of the only file, in single-file mode. */
     public long fileSize() {
-        return fileSize;
+        return byId.values().iterator().next().size();
     }
 
-    /** The unthrottled thumbnail. 404s when the served file is not an image. */
-    private void handlePreview(HttpExchange exchange) throws IOException {
-        byte[] thumb = thumbnail;
+    public List<LibraryFile> files() {
+        return List.copyOf(byId.values());
+    }
+
+    // ---- routes ----------------------------------------------------------
+
+    private static void handleHealth(HttpExchange exchange) throws IOException {
+        sendText(exchange, 200, "ok", "text/plain; charset=utf-8");
+    }
+
+    /** The picker's data. Hand-rolled JSON; the project carries no JSON dependency. */
+    private void handleList(HttpExchange exchange) throws IOException {
+        String json = byId.values().stream()
+                .map(LibraryFile::toJson)
+                .collect(Collectors.joining(",", "[", "]"));
+        exchange.getResponseHeaders().add("Cache-Control", "no-store");
+        sendText(exchange, 200, json, "application/json; charset=utf-8");
+    }
+
+    private void handleLibraryFile(HttpExchange exchange) throws IOException {
+        LibraryFile file = byId.get(lastSegment(exchange));
+        if (file == null) {
+            exchange.sendResponseHeaders(404, -1);
+            exchange.close();
+            return;
+        }
+        serve(exchange, file);
+    }
+
+    private void handleSingle(HttpExchange exchange) throws IOException {
+        serve(exchange, byId.get(singleFileName));
+    }
+
+    /** Unthrottled preview, so the picker paints immediately. */
+    private void handleThumb(HttpExchange exchange) throws IOException {
+        LibraryFile file = byId.get(lastSegment(exchange));
+        byte[] thumb = file == null ? null : file.thumbnail();
         if (thumb == null) {
             exchange.sendResponseHeaders(404, -1);
             exchange.close();
@@ -146,48 +169,16 @@ public final class LocalFileServer implements AutoCloseable {
         exchange.close();
     }
 
-    /** Media type from the file extension, so a browser can open it directly. */
-    private String contentType() {
-        String lower = fileName.toLowerCase();
-        if (lower.endsWith(".png")) {
-            return "image/png";
-        }
-        if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) {
-            return "image/jpeg";
-        }
-        if (lower.endsWith(".mp4")) {
-            return "video/mp4";
-        }
-        return "application/octet-stream";
-    }
-
-    /** Cheap 200 for platform health checks. */
-    private static void handleHealth(HttpExchange exchange) throws IOException {
-        byte[] body = "ok".getBytes(java.nio.charset.StandardCharsets.UTF_8);
-        exchange.getResponseHeaders().add("Content-Type", "text/plain; charset=utf-8");
-        exchange.sendResponseHeaders(200, body.length);
-        try (OutputStream out = exchange.getResponseBody()) {
-            out.write(body);
-        }
-        exchange.close();
-    }
-
-    /**
-     * Serves the interactive demo page bundled in the jar.
-     *
-     * <p>Falls back to the plain-text description if the resource is missing, so a
-     * stripped-down build still explains itself rather than 500-ing.
-     */
+    /** The page, or a plain-text description when it is not on the classpath. */
     private void handleRoot(HttpExchange exchange) throws IOException {
         if (!"/".equals(exchange.getRequestURI().getPath())) {
-            // Unknown path: not the file, not the page.
             exchange.sendResponseHeaders(404, -1);
             exchange.close();
             return;
         }
         byte[] page = readPage();
         if (page == null) {
-            handleInfo(exchange);
+            sendText(exchange, 200, describe(), "text/plain; charset=utf-8");
             return;
         }
         exchange.getResponseHeaders().add("Content-Type", "text/html; charset=utf-8");
@@ -199,51 +190,22 @@ public final class LocalFileServer implements AutoCloseable {
         exchange.close();
     }
 
-    /** Reads the bundled page, or {@code null} if it is not on the classpath. */
-    private static byte[] readPage() {
-        try (java.io.InputStream in = LocalFileServer.class.getResourceAsStream("/web/index.html")) {
-            return in == null ? null : in.readAllBytes();
-        } catch (IOException e) {
-            return null;
-        }
-    }
+    // ---- the range contract ---------------------------------------------
 
-    /**
-     * Plain-text description of what is being served - handy from curl, and the
-     * fallback when the bundled page is unavailable.
-     */
-    private void handleInfo(HttpExchange exchange) throws IOException {
-        String body = "CompletableFuture demo file server\n\n"
-                + "file            /" + fileName + "\n"
-                + "size            " + fileSize + " bytes\n"
-                + "accept-ranges   bytes\n"
-                + "per-connection  " + (perConnectionBytesPerSecond > 0
-                        ? String.format("%.2f MB/s", perConnectionBytesPerSecond / (1024 * 1024))
-                        : "unlimited") + "\n\n"
-                + "Point the demo at it:\n"
-                + "  java demo.App download --url <this-url>/" + fileName + "\n";
-        byte[] bytes = body.getBytes(java.nio.charset.StandardCharsets.UTF_8);
-        exchange.getResponseHeaders().add("Content-Type", "text/plain; charset=utf-8");
-        exchange.getResponseHeaders().add("Accept-Ranges", "bytes");
-        exchange.sendResponseHeaders(200, bytes.length);
-        try (OutputStream out = exchange.getResponseBody()) {
-            out.write(bytes);
-        }
-        exchange.close();
-    }
-
-    private void handle(HttpExchange exchange) throws IOException {
+    private void serve(HttpExchange exchange, LibraryFile file) throws IOException {
         try {
             String method = exchange.getRequestMethod();
             exchange.getResponseHeaders().add("Accept-Ranges", "bytes");
-            exchange.getResponseHeaders().add("Content-Type", contentType());
-            // Without this the browser would serve round 2 from cache and "win" instantly.
+            exchange.getResponseHeaders().add("Content-Type", file.contentType());
+            // Without this the browser would serve the second round from cache and
+            // "win" instantly.
             exchange.getResponseHeaders().add("Cache-Control", "no-store");
 
             if ("HEAD".equalsIgnoreCase(method)) {
-                handleHead(exchange);
+                exchange.getResponseHeaders().add("Content-Length", Long.toString(file.size()));
+                exchange.sendResponseHeaders(200, -1);
             } else if ("GET".equalsIgnoreCase(method)) {
-                handleGet(exchange);
+                handleGet(exchange, file);
             } else {
                 exchange.sendResponseHeaders(405, -1);
             }
@@ -255,36 +217,28 @@ public final class LocalFileServer implements AutoCloseable {
         }
     }
 
-    private void handleHead(HttpExchange exchange) throws IOException {
-        // -1 would mean "no body"; sendResponseHeaders with a length but HEAD must not
-        // write a body, so we set Content-Length explicitly and send "no body".
-        exchange.getResponseHeaders().add("Content-Length", Long.toString(fileSize));
-        exchange.sendResponseHeaders(200, -1);
-    }
-
-    private void handleGet(HttpExchange exchange) throws IOException {
+    private void handleGet(HttpExchange exchange, LibraryFile file) throws IOException {
         String rangeHeader = exchange.getRequestHeaders().getFirst("Range");
-
         if (rangeHeader == null || rangeHeader.isBlank()) {
-            send(exchange, 200, 0, fileSize - 1, false);
+            send(exchange, file, 200, 0, file.size() - 1, false);
             return;
         }
-
-        long[] range = parseRange(rangeHeader, fileSize);
+        long[] range = parseRange(rangeHeader, file.size());
         if (range == null) {
             // RFC 9110: an unsatisfiable range gets 416 plus the true total size.
-            exchange.getResponseHeaders().add("Content-Range", "bytes */" + fileSize);
+            exchange.getResponseHeaders().add("Content-Range", "bytes */" + file.size());
             exchange.sendResponseHeaders(416, -1);
             return;
         }
-        send(exchange, 206, range[0], range[1], true);
+        send(exchange, file, 206, range[0], range[1], true);
     }
 
-    private void send(HttpExchange exchange, int status, long start, long end, boolean partial)
-            throws IOException {
+    private void send(HttpExchange exchange, LibraryFile file, int status,
+                      long start, long end, boolean partial) throws IOException {
         long length = end - start + 1;
         if (partial) {
-            exchange.getResponseHeaders().add("Content-Range", "bytes " + start + "-" + end + "/" + fileSize);
+            exchange.getResponseHeaders().add("Content-Range",
+                    "bytes " + start + "-" + end + "/" + file.size());
         }
         exchange.sendResponseHeaders(status, length);
 
@@ -292,7 +246,7 @@ public final class LocalFileServer implements AutoCloseable {
                 ? new ThrottledOutputStream.Limiter(perConnectionBytesPerSecond)
                 : null;
 
-        try (RandomAccessFile raf = new RandomAccessFile(file.toFile(), "r");
+        try (RandomAccessFile raf = new RandomAccessFile(file.path().toFile(), "r");
              OutputStream raw = exchange.getResponseBody();
              OutputStream out = new ThrottledOutputStream(raw, perConnection, globalLimiter)) {
 
@@ -300,8 +254,7 @@ public final class LocalFileServer implements AutoCloseable {
             byte[] buffer = new byte[64 * 1024];
             long remaining = length;
             while (remaining > 0) {
-                int wanted = (int) Math.min(buffer.length, remaining);
-                int read = raf.read(buffer, 0, wanted);
+                int read = raf.read(buffer, 0, (int) Math.min(buffer.length, remaining));
                 if (read < 0) {
                     break;
                 }
@@ -318,8 +271,6 @@ public final class LocalFileServer implements AutoCloseable {
      * <p>Handles {@code bytes=a-b}, {@code bytes=a-} (to end) and {@code bytes=-n}
      * (last n bytes). Returns {@code null} for anything unsatisfiable or for
      * multi-range requests, which this server deliberately does not support.
-     *
-     * @return {@code {start, endInclusive}} or {@code null}
      */
     static long[] parseRange(String header, long fileSize) {
         String value = header.trim().toLowerCase();
@@ -328,16 +279,14 @@ public final class LocalFileServer implements AutoCloseable {
         }
         String spec = value.substring("bytes=".length()).trim();
         if (spec.contains(",")) {
-            return null;            // multi-range: not supported here
+            return null;
         }
         int dash = spec.indexOf('-');
         if (dash < 0) {
             return null;
         }
-
         String from = spec.substring(0, dash).trim();
         String to = spec.substring(dash + 1).trim();
-
         try {
             long start;
             long end;
@@ -345,7 +294,7 @@ public final class LocalFileServer implements AutoCloseable {
                 if (to.isEmpty()) {
                     return null;
                 }
-                long suffix = Long.parseLong(to);       // bytes=-n  ->  last n bytes
+                long suffix = Long.parseLong(to);       // bytes=-n -> last n bytes
                 if (suffix <= 0) {
                     return null;
                 }
@@ -362,6 +311,56 @@ public final class LocalFileServer implements AutoCloseable {
         } catch (NumberFormatException e) {
             return null;
         }
+    }
+
+    // ---- helpers ---------------------------------------------------------
+
+    private static String lastSegment(HttpExchange exchange) {
+        String path = exchange.getRequestURI().getPath();
+        return path.substring(path.lastIndexOf('/') + 1);
+    }
+
+    private static void sendText(HttpExchange exchange, int status, String body, String type)
+            throws IOException {
+        byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+        exchange.getResponseHeaders().add("Content-Type", type);
+        exchange.sendResponseHeaders(status, bytes.length);
+        try (OutputStream out = exchange.getResponseBody()) {
+            out.write(bytes);
+        }
+        exchange.close();
+    }
+
+    private String describe() {
+        StringBuilder sb = new StringBuilder("CompletableFuture demo file server\n\n");
+        byId.values().forEach(f -> sb.append(String.format("  /files/%-16s %-6s %,12d bytes%n",
+                f.id(), f.kind(), f.size())));
+        sb.append(String.format("%nper-connection limit  %s%n", perConnectionBytesPerSecond > 0
+                ? String.format("%.2f MB/s", perConnectionBytesPerSecond / (1024 * 1024))
+                : "unlimited"));
+        return sb.toString();
+    }
+
+    private static byte[] readPage() {
+        try (java.io.InputStream in = LocalFileServer.class.getResourceAsStream("/web/index.html")) {
+            return in == null ? null : in.readAllBytes();
+        } catch (IOException e) {
+            return null;
+        }
+    }
+
+    static String guessContentType(String name) {
+        String lower = name.toLowerCase();
+        if (lower.endsWith(".png")) {
+            return "image/png";
+        }
+        if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) {
+            return "image/jpeg";
+        }
+        if (lower.endsWith(".mp4")) {
+            return "video/mp4";
+        }
+        return "application/octet-stream";
     }
 
     @Override

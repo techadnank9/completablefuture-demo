@@ -53,12 +53,21 @@
   .sub b{color:var(--text);font-weight:620}
 
   /* ── the file ─────────────────────────────────────────────── */
-  .filechip{display:flex;align-items:center;gap:14px;max-width:392px;margin:30px auto 0;
-    background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px 15px}
-  .filechip img{width:84px;height:47px;object-fit:cover;border-radius:6px;flex:none;
-                background:var(--track)}
-  .filechip .n{font-size:14px;color:var(--text);font-weight:600}
-  .filechip .m{font-family:var(--mono);font-size:11.5px;color:var(--text-3);margin-top:3px}
+  .picker{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin:30px 0 0}
+  .pick{background:var(--surface);border:1px solid var(--border);border-radius:13px;
+    padding:11px;cursor:pointer;text-align:left;font-family:inherit;color:inherit;
+    display:block;transition:border-color .12s,background .12s}
+  .pick:hover:not([aria-pressed="true"]){border-color:var(--border-strong)}
+  .pick[aria-pressed="true"]{border-color:var(--blue);background:var(--surface-2)}
+  .pick .shot{position:relative;display:block;line-height:0}
+  .pick img{width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:8px;display:block;
+            background:var(--track)}
+  .pick .kindtag{position:absolute;left:8px;top:8px;background:rgba(6,9,12,.72);
+    color:var(--text);font-size:10.5px;font-weight:600;letter-spacing:.04em;
+    padding:3px 7px;border-radius:5px}
+  .pick .t{display:block;font-size:14px;font-weight:600;margin-top:10px;color:var(--text)}
+  .pick .m{display:block;font-family:var(--mono);font-size:11.5px;color:var(--text-3);margin-top:3px}
+  .pick:disabled{opacity:.5;cursor:not-allowed}
   .split{display:flex;justify-content:center;align-items:center;gap:12px;
          color:var(--text-3);font-size:12.5px;margin:18px 0 6px}
   .split .arm{height:1px;background:var(--border);flex:1;max-width:180px}
@@ -112,7 +121,7 @@
   .drop{margin-top:auto;border-radius:9px;background:var(--track);
         aspect-ratio:16/9;display:flex;align-items:center;justify-content:center;
         color:var(--text-3);font-size:12.5px;overflow:hidden;text-align:center;padding:8px}
-  .drop img{width:100%;height:100%;object-fit:cover;display:block;
+  .drop img,.drop video{width:100%;height:100%;object-fit:cover;display:block;
             animation:rise .5s cubic-bezier(.16,1,.3,1)}
   @keyframes rise{from{opacity:0;transform:scale(.97)}to{opacity:1;transform:none}}
 
@@ -150,6 +159,7 @@
 
   @media (max-width:760px){
     body{padding:30px 16px 60px}
+    .picker{grid-template-columns:1fr}
     .race{grid-template-columns:1fr}
     button.run{width:100%}
     .segwrap{width:100%;justify-content:center}
@@ -162,22 +172,17 @@
 
   <h1>One file. Two ways. Same moment.</h1>
   <p class="sub">
-    Both sides fetch the file below at the same instant. The left uses a single
-    connection; the right splits it into byte ranges fetched in parallel. Each ends up
-    with its own copy, which you can open or save. <b>They should be identical; that is
-    the point.</b> PNG is compressed, so a range written to the wrong offset would not
-    decode at all. Seeing a picture here means every byte arrived where it belonged.
+    Pick a file, then watch both sides fetch it at the same instant. The left uses a
+    single connection; the right splits it into byte ranges fetched in parallel. Each
+    ends up with its own copy, which you can open, play or save.
+    <b>They should be identical; that is the point.</b> PNG and MP4 are both compressed,
+    so a range written to the wrong offset would not decode at all. Getting a picture
+    that shows, or a video that plays, means every byte arrived where it belonged.
   </p>
 
-  <div class="filechip">
-    <img id="srcimg" src="/preview.png" alt="thumbnail of the file being downloaded" />
-    <div>
-      <div class="n" id="srcname">concurrency.png</div>
-      <div class="m"><span id="srcsize">…</span> · image/png</div>
-    </div>
-  </div>
+  <div class="picker" id="picker" role="group" aria-label="Choose a file to download"></div>
 
-  <div class="split"><span class="arm"></span>this one file, fetched two ways<span class="arm"></span></div>
+  <div class="split"><span class="arm"></span><span id="pickedLine">choose a file</span><span class="arm"></span></div>
 
   <div class="controls">
     <button class="run" id="run">Start the race</button>
@@ -257,22 +262,16 @@
 </div>
 
 <script>
-const FILE = '/concurrency.png';
 const $ = id => document.getElementById(id);
-let chunkCount = 8, total = 0;
+let chunkCount = 8;
+let files = [];
+let current = null;          // the selected LibraryFile
 const history = [];
-
-document.querySelectorAll('.seg button').forEach(chip => chip.addEventListener('click', () => {
-  document.querySelectorAll('.seg button').forEach(c => c.setAttribute('aria-pressed','false'));
-  chip.setAttribute('aria-pressed','true');
-  chunkCount = Number(chip.dataset.n);
-  $('conKind').textContent = `${chunkCount} connections, parallel ranges`;
-}));
 
 const fmtT   = ms => (ms/1000).toFixed(2)+'s';
 const human  = b  => (b/1048576).toFixed(2)+' MB';
 const fmtSpd = (b,ms) => ((b/1048576)/(ms/1000)).toFixed(2)+' MB/s';
-const bust   = () => FILE + '?r=' + Math.random().toString(36).slice(2);
+const bust   = () => `/files/${current.id}?r=` + Math.random().toString(36).slice(2);
 
 async function sha256Hex(buf){
   const d = await crypto.subtle.digest('SHA-256', buf);
@@ -284,20 +283,48 @@ function clock(el){
   return () => { clearInterval(id); const ms = performance.now()-t0;
                  el.textContent = (ms/1000).toFixed(2)+'s'; return ms; };
 }
+function setBusy(busy){
+  $('run').disabled = busy;
+  $('run').textContent = busy ? 'Racing\u2026' : 'Start the race';
+  document.querySelectorAll('.seg button, .pick').forEach(el => el.disabled = busy);
+}
 
-// Show the file that is about to be downloaded, and its real size.
-(async function preview(){
-  try{
-    const head = await fetch(FILE, { method:'HEAD', cache:'no-store' });
-    total = Number(head.headers.get('content-length')) || 0;
-    $('srcsize').textContent = human(total);
-    $('srcimg').src = '/preview.png?v=' + total;  // unthrottled thumbnail, keyed to the file
-    $('srcname').textContent = FILE.replace('/','');
-  }catch(e){ $('srcsize').textContent = 'unavailable'; }
-})();
+// ── the library picker ───────────────────────────────────────────────
+async function loadLibrary(){
+  const res = await fetch('/api/files', { cache:'no-store' });
+  files = await res.json();
+  const host = $('picker');
+  host.innerHTML = '';
+  files.forEach((f, i) => {
+    const b = document.createElement('button');
+    b.className = 'pick';
+    b.type = 'button';
+    b.setAttribute('aria-pressed', String(i === 0));
+    b.innerHTML =
+      `<span class="shot"><img src="/thumb/${f.id}" alt="" loading="lazy">` +
+      `<span class="kindtag">${f.kind}</span></span>` +
+      `<span class="t">${f.title}</span>` +
+      `<span class="m">${f.fileName} · ${human(f.size)}</span>`;
+    b.addEventListener('click', () => select(f));
+    host.appendChild(b);
+  });
+  if(files.length) select(files[0]);
+}
 
-// ── left: one connection, start to finish ──────────────────────────
-async function runSequential(onProgress){
+function select(file){
+  current = file;
+  document.querySelectorAll('.pick').forEach((el, i) =>
+    el.setAttribute('aria-pressed', String(files[i].id === file.id)));
+  $('pickedLine').textContent = `${file.fileName} · ${human(file.size)} · fetched two ways`;
+  // A different file invalidates the comparison table.
+  history.length = 0;
+  $('histTable').style.display = 'none';
+  $('verdict').style.display = 'none';
+  resetLanes(chunkCount);
+}
+
+// ── left: one connection, start to finish ────────────────────────────
+async function runSequential(total, onProgress){
   const res = await fetch(bust(), { cache:'no-store' });
   if(!res.ok) throw new Error('left side: HTTP '+res.status);
   const reader = res.body.getReader();
@@ -310,8 +337,8 @@ async function runSequential(onProgress){
   return out;
 }
 
-// ── right: one request per range, all at once ──────────────────────
-async function runConcurrent(n, onChunk, onTotal){
+// ── right: one request per range, all at once ────────────────────────
+async function runConcurrent(total, n, onChunk, onTotal){
   const base = Math.floor(total / n);
   const out = new Uint8Array(total);
   const got = new Array(n).fill(0);
@@ -332,7 +359,7 @@ async function runConcurrent(n, onChunk, onTotal){
       }
     })();
   });
-  await Promise.all(tasks);                        // ← the allOf of this page
+  await Promise.all(tasks);                        // the allOf of this page
   return out;
 }
 
@@ -348,12 +375,15 @@ function miniBars(n){
   });
 }
 
+/** Renders whatever arrived, as the medium it actually is. */
 function deliver(buf, dropId, openId, name){
-  const blob = new Blob([buf], { type:'image/png' });
+  const blob = new Blob([buf], { type: current.contentType });
   const url = URL.createObjectURL(blob);
-  $(dropId).innerHTML = `<img src="${url}" alt="the downloaded image">`;
+  $(dropId).innerHTML = current.contentType.startsWith('video/')
+    ? `<video src="${url}" controls playsinline muted loop></video>`
+    : `<img src="${url}" alt="the downloaded file">`;
   $(openId).innerHTML =
-    `<a href="${url}" target="_blank" rel="noopener">Open the file ↗</a>` +
+    `<a href="${url}" target="_blank" rel="noopener">Open the file</a>` +
     `<a href="${url}" download="${name}">Save it</a>`;
 }
 
@@ -363,48 +393,58 @@ function renderHistory(){
   const fastest = Math.min(...history.map(h=>h.ms));
   $('histBody').innerHTML = history.map(h =>
     `<tr${h.ms===fastest?' class="best"':''}><td>${h.n}</td><td>${fmtT(h.ms)}</td>` +
-    `<td>${fmtSpd(h.bytes,h.ms)}</td><td>${(h.seqMs/h.ms).toFixed(1)}×</td></tr>`).join('');
+    `<td>${fmtSpd(h.bytes,h.ms)}</td><td>${(h.seqMs/h.ms).toFixed(1)}\u00d7</td></tr>`).join('');
 }
 
-$('run').addEventListener('click', async () => {
-  const n = chunkCount;
-  $('run').disabled = true; $('run').textContent = 'Racing\u2026';
-  document.querySelectorAll('.seg button').forEach(c=>c.disabled = true);
+function resetLanes(n){
   $('err').style.display = $('warn').style.display = 'none';
-  $('verdict').style.display = 'none';
   $('badgeSeq').style.display = $('badgeCon').style.display = 'none';
   $('laneSeq').classList.remove('won'); $('laneCon').classList.remove('won');
   $('seqFill').style.width = $('conFill').style.width = '0';
-  $('seqDrop').innerHTML = $('conDrop').innerHTML = 'downloading…';
+  $('seqClock').textContent = $('conClock').textContent = '0.0s';
+  $('seqPct').textContent = $('conPct').textContent = 'waiting';
+  $('seqDrop').innerHTML = $('conDrop').innerHTML = 'nothing yet';
   $('seqOpen').innerHTML = $('conOpen').innerHTML = '';
-  const fills = miniBars(n);
+  return miniBars(n);
+}
+
+document.querySelectorAll('.seg button').forEach(chip => chip.addEventListener('click', () => {
+  document.querySelectorAll('.seg button').forEach(c => c.setAttribute('aria-pressed','false'));
+  chip.setAttribute('aria-pressed','true');
+  chunkCount = Number(chip.dataset.n);
+  $('conKind').textContent = `${chunkCount} connections, parallel ranges`;
+  miniBars(chunkCount);
+}));
+
+// ── the race ─────────────────────────────────────────────────────────
+$('run').addEventListener('click', async () => {
+  if(!current) return;
+  const n = chunkCount;
+  setBusy(true);
+  $('verdict').style.display = 'none';
+  const fills = resetLanes(n);
 
   try{
-    if(!total){
-      const head = await fetch(FILE, { method:'HEAD', cache:'no-store' });
-      total = Number(head.headers.get('content-length'));
-    }
-    if(!total) throw new Error('server did not report a Content-Length');
-
+    const total = current.size;
     const stopSeq = clock($('seqClock'));
     const stopCon = clock($('conClock'));
     let seqMs = 0, conMs = 0, firstDone = null;
 
-    // Both start now. Same instant, same network, no "maybe it was just faster
-    // the second time" — which is the whole reason for racing them together.
-    const seqTask = runSequential(got => {
+    // Both start now. Same instant, same network, so nobody can argue the second
+    // run simply caught a faster moment.
+    const seqTask = runSequential(total, got => {
       const p = got/total;
       $('seqFill').style.width = (p*100)+'%';
       $('seqPct').textContent = Math.round(p*100)+'% · '+human(got);
     }).then(buf => {
       seqMs = stopSeq();
       $('seqPct').textContent = 'done · '+fmtSpd(total,seqMs);
-      deliver(buf, 'seqDrop', 'seqOpen', 'sequential.png');
+      deliver(buf, 'seqDrop', 'seqOpen', 'sequential-'+current.fileName);
       if(!firstDone){ firstDone='seq'; $('badgeSeq').style.display='block'; $('laneSeq').classList.add('won'); }
       return buf;
     });
 
-    const conTask = runConcurrent(n, (i,got,len) => {
+    const conTask = runConcurrent(total, n, (i,got,len) => {
       if(fills[i]) fills[i].style.width = ((got/len)*100)+'%';
     }, got => {
       const p = got/total;
@@ -413,7 +453,7 @@ $('run').addEventListener('click', async () => {
     }).then(buf => {
       conMs = stopCon();
       $('conPct').textContent = 'done · '+fmtSpd(total,conMs);
-      deliver(buf, 'conDrop', 'conOpen', 'concurrent.png');
+      deliver(buf, 'conDrop', 'conOpen', 'concurrent-'+current.fileName);
       if(!firstDone){ firstDone='con'; $('badgeCon').style.display='block'; $('laneCon').classList.add('won'); }
       return buf;
     });
@@ -423,22 +463,21 @@ $('run').addEventListener('click', async () => {
     const same = seqSha === conSha;
     const ratio = seqMs / conMs;
 
-    $('vSpeed').textContent = ratio.toFixed(1)+'×';
+    $('vSpeed').textContent = ratio.toFixed(1)+'\u00d7';
     $('vWord').textContent  = ratio >= 1 ? 'faster' : 'slower';
     $('vText').textContent  =
       `Left took ${fmtT(seqMs)} over 1 connection. Right took ${fmtT(conMs)} over ${n}. ` +
       `Identical ${human(total)} either way.`;
-    $('vSeqSha').textContent = seqSha.slice(0,4)+'…'+seqSha.slice(-4);
-    $('vConSha').textContent = conSha.slice(0,4)+'…'+conSha.slice(-4);
+    $('vSeqSha').textContent = seqSha.slice(0,4)+'\u2026'+seqSha.slice(-4);
+    $('vConSha').textContent = conSha.slice(0,4)+'\u2026'+conSha.slice(-4);
     $('vMatch').textContent = same
-      ? '✓ Both sides produced the very same file, byte for byte.'
-      : '✗ The two files differ. A range landed in the wrong place.';
+      ? '\u2713 Both sides produced the very same file, byte for byte.'
+      : '\u2717 The two files differ. A range landed in the wrong place.';
     $('vProof').className = same ? 'proof' : 'proof bad';
     $('verdict').style.display = 'block';
 
     // The sides share one client. If together they moved far less than the server
-    // was willing to give, something on this end capped them - say which, rather
-    // than quietly reporting a measurement that understates the effect.
+    // offered, something on this end capped them: say which.
     const neededMbps = 0.4 * (n + 1);
     const actualMbps = ((total/1048576)/(seqMs/1000)) + ((total/1048576)/(conMs/1000));
     if(actualMbps < neededMbps * 0.75){
@@ -448,7 +487,7 @@ $('run').addEventListener('click', async () => {
       $('warn').textContent = capped
         ? `Note: the server offered about ${neededMbps.toFixed(1)} MB/s but only ${actualMbps.toFixed(1)} MB/s arrived. ` +
           `Browsers open roughly 6 connections per origin on HTTP/1.1, so ${n} ranges plus the single ` +
-          `stream could not all run at once, so the extra ones queued. Which is the same lesson as the ` +
+          `stream could not all run at once and the extras queued. Which is the same lesson as the ` +
           `server side: parallelism beyond what the channel allows buys you nothing.`
         : `Note: the server offered about ${neededMbps.toFixed(1)} MB/s but only ${actualMbps.toFixed(1)} MB/s arrived, ` +
           `so your own connection, not the server, was the limit here. The gap would be wider on a faster link.`;
@@ -463,9 +502,13 @@ $('run').addEventListener('click', async () => {
     $('err').textContent = 'Something went wrong: ' + e.message;
     $('err').style.display = 'block';
   }finally{
-    $('run').disabled = false; $('run').textContent = 'Start the race';
-    document.querySelectorAll('.seg button').forEach(c=>c.disabled = false);
+    setBusy(false);
   }
+});
+
+loadLibrary().catch(e => {
+  $('err').textContent = 'Could not load the file library: ' + e.message;
+  $('err').style.display = 'block';
 });
 </script>
 </body>

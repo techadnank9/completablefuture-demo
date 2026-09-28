@@ -7,25 +7,26 @@ import demo.common.Log;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.concurrent.CountDownLatch;
+import java.util.stream.Stream;
 
 /**
- * Runs {@link LocalFileServer} as a long-lived public server instead of as a
- * fixture inside the demo.
+ * Runs {@link LocalFileServer} as a long-lived public server with a small library
+ * of downloadable files, instead of as a fixture inside the offline demo.
  *
- * <p>This is what lets {@code --url} real mode show a genuine speedup. Public CDNs
- * deliberately do <em>not</em> limit each connection — that is the whole point of a
- * CDN — so downloading from one in parallel gains almost nothing. Deploying this
- * server gives the demo a real server, reached over the real internet, that behaves
- * the way throttled origins actually behave.
+ * <p>This is what lets {@code --url} real mode, and the browser page, show a genuine
+ * speedup. Public CDNs deliberately do <em>not</em> limit each connection - that is
+ * the whole point of a CDN - so downloading from one in parallel gains almost
+ * nothing. Serving the files ourselves gives the demo a real server, reached over
+ * the real internet, that behaves the way throttled origins actually behave.
  *
  * <h2>Tuning it for a room</h2>
  * The per-connection limit only matters if it is <em>tighter than the network the
- * audience is on</em>. If the lecture hall has 25 Mbps and each connection is
- * capped at 3 MB/s, eight chunks simply saturate the hall's uplink and no speedup
- * appears. So deployed defaults are deliberately small: an 8 MB file at 0.4 MB/s
- * per connection means the sequential round takes about 20 seconds, the eight-chunk
- * round about 2.5, and the peak aggregate is only around 26 Mbps.
+ * audience is on</em>. If the hall has 25 Mbps and each connection is capped at
+ * 3 MB/s, eight ranges simply saturate the hall's uplink and no speedup appears. So
+ * the deployed defaults are deliberately small: at 0.4 MB/s an 8 MB file takes about
+ * twenty seconds on one connection and the peak aggregate is only around 26 Mbps.
  *
  * <p>Both are environment variables, so they can be retuned from the hosting
  * dashboard after testing on the actual network, without a redeploy.
@@ -41,10 +42,10 @@ public final class ServeCommand {
     }
 
     /**
-     * Generates the file, starts the server and blocks forever.
+     * Builds the library, starts the server and blocks forever.
      *
-     * <p>Reads {@code PORT}, {@code DEMO_SIZE_MB} and {@code DEMO_THROTTLE_MBPS}
-     * from the environment; explicit flags win over the environment.
+     * <p>Reads {@code PORT}, {@code DEMO_SIZE_MB} and {@code DEMO_THROTTLE_MBPS} from
+     * the environment; explicit flags win over the environment.
      */
     public static void run(Integer portFlag, Integer sizeMbFlag, Double throttleFlag) throws Exception {
         int port = portFlag != null ? portFlag : envInt("PORT", DEFAULT_PORT);
@@ -55,34 +56,42 @@ public final class ServeCommand {
         Log.resetClock();
         Console.banner("FILE SERVER");
 
-        // A real PNG, not random bytes: the page shows the downloaded image, so the
-        // audience sees the two rounds produce the identical picture rather than
-        // being asked to trust two hex strings.
-        Path file = SampleImage.write(
-                Files.createTempDirectory("cf-demo-").resolve("concurrency.png"), sizeMb);
+        Path workDir = Files.createTempDirectory("cf-demo-");
+        List<LibraryFile> library = FileLibrary.build(workDir, sizeMb);
 
-        // 0.0.0.0, not loopback: the platform routes external traffic to us.
-        // No global cap here - the per-connection limit is the whole mechanism,
-        // and a shared ceiling would cap the concurrent round we are trying to show.
-        LocalFileServer server = LocalFileServer.start(file, throttle, 0, "0.0.0.0", port);
+        // 0.0.0.0, not loopback: the platform routes external traffic to us. No global
+        // cap - the per-connection limit is the whole mechanism, and a shared ceiling
+        // would cap the concurrent round this is meant to show.
+        LocalFileServer server = LocalFileServer.start(library, throttle, 0, "0.0.0.0", port);
 
-        Log.info("Serving %s on port %d", Bytes.human(server.fileSize()), port);
+        long largest = library.stream().mapToLong(LibraryFile::size).max().orElse(0);
+        Log.info("Serving %d files on port %d, largest %s", library.size(), port, Bytes.human(largest));
         Log.info("Per-connection limit: %.2f MB/s", throttle);
-        Log.info("Expect roughly %.0fs sequential and %.1fs with 8 chunks",
-                (sizeMb / throttle), (sizeMb / (throttle * 8)));
-        Log.info("File path: /%s   Health: /health", file.getFileName());
+        Log.info("Largest file: about %.0fs on one connection, %.1fs across 8",
+                (largest / 1048576.0) / throttle, (largest / 1048576.0) / (throttle * 8));
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             server.close();
-            try {
-                Files.deleteIfExists(file);
-            } catch (IOException ignored) {
-                // Nothing useful to do while the JVM is going down.
-            }
+            deleteTree(workDir);
         }, "serve-shutdown"));
 
         // Park the main thread. The server's own pool does the work.
         new CountDownLatch(1).await();
+    }
+
+    /** Best-effort cleanup of the generated library on the way out. */
+    private static void deleteTree(Path dir) {
+        try (Stream<Path> paths = Files.walk(dir)) {
+            paths.sorted(java.util.Comparator.reverseOrder()).forEach(p -> {
+                try {
+                    Files.deleteIfExists(p);
+                } catch (IOException ignored) {
+                    // Nothing useful to do while the JVM is going down.
+                }
+            });
+        } catch (IOException ignored) {
+            // Same.
+        }
     }
 
     private static int envInt(String name, int fallback) {

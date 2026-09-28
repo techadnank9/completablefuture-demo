@@ -6,121 +6,106 @@ import java.awt.Font;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Random;
 
 /**
- * Generates the file the demo downloads: a real, openable PNG rather than a blob
- * of random bytes.
+ * Generates the photographs in the demo's file library.
  *
- * <p>This matters for the hosted page. Two matching SHA-256 strings ask the
- * audience to trust the arithmetic; two matching <em>pictures</em>, one of which
- * appeared several seconds before the other, prove the same thing by being looked
- * at. The visitor can also save the file and open it, which is the difference
- * between a demo and an animation.
+ * <p>Drawn with Java2D and written by ImageIO, both in the JDK, so the project keeps
+ * its zero-dependency promise and the library needs no bundled stock imagery.
  *
- * <p>Drawn with Java2D and written by ImageIO - both in the JDK, so the project
- * keeps its zero-dependency promise.
+ * <p>Deliberately <em>not</em> diagrams. The page frames these files in neutral grey
+ * chrome so the picture is the only saturated thing on screen; an image sharing the
+ * interface's palette would camouflage into it and stop reading as a file at all.
+ *
+ * <p>Each is also its own proof. PNG is compressed, so a byte range written to the
+ * wrong offset does not produce a tidy seam, it corrupts the stream and the file
+ * stops decoding. Seeing any picture means every byte arrived where it belonged.
  */
 public final class SampleImage {
 
-    /** Brand colours, matching the slides and the web page. */
+    /** Colour ramps, each with its own wave geometry so the photos look distinct. */
+    public enum Palette {
+        SUNSET(new Color[]{ new Color(0x2B1533), new Color(0xB5296B),
+                            new Color(0xF2762E), new Color(0xFFC24B) }, 5.0, 2.5, 7.5),
+        CURRENT(new Color[]{ new Color(0x101B3A), new Color(0x2E6BC9),
+                             new Color(0x36C9B0), new Color(0xEAF7B5) }, 3.2, 4.4, 5.0);
+
+        private final Color[] stops;
+        private final double freqA;
+        private final double freqB;
+        private final double freqC;
+
+        Palette(Color[] stops, double freqA, double freqB, double freqC) {
+            this.stops = stops;
+            this.freqA = freqA;
+            this.freqB = freqB;
+            this.freqC = freqC;
+        }
+    }
+
+    /** Fixed seed, so every machine and every run produces the same SHA-256. */
+    private static final long DITHER_SEED = 20260927L;
 
     private SampleImage() {
     }
 
     /**
-     * Draws the image and writes it as a PNG, sized to land near {@code targetMb}.
+     * Draws a photograph and writes it as a PNG, sized to land near {@code targetMb}.
      *
-     * <p>PNG compresses aggressively, so a clean illustration would come out far
-     * smaller than asked. A faint per-pixel dither is applied - invisible at
-     * viewing size, but enough to stop the encoder from collapsing large flat
-     * areas - and the resolution is derived from the target so the finished file
-     * lands in the right neighbourhood.
-     *
-     * @return the written file
+     * <p>A clean gradient would compress far below the requested size, so a faint
+     * deterministic dither is applied. It is invisible at viewing size but stops the
+     * encoder collapsing large smooth regions, which keeps the file big enough for
+     * the download to be worth watching.
      */
-    public static Path write(Path target, int targetMb) throws IOException {
-        // Measured: a dithered PNG of this field costs about 2.3 bytes per pixel,
-        // so this picks a resolution that lands near the requested size.
+    public static Path write(Path target, int targetMb, Palette palette) throws IOException {
+        // Measured: a dithered PNG of this field costs about 2.3 bytes per pixel.
         long targetBytes = (long) targetMb * 1024 * 1024;
         int pixels = (int) (targetBytes / 2.3);
         int width = (int) Math.round(Math.sqrt(pixels * 16.0 / 9.0));
         int height = (int) Math.round(width * 9.0 / 16.0);
 
         BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
-        Graphics2D g = image.createGraphics();
-        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-        g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
-        g.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
-
-        draw(g, width, height);
-        g.dispose();
-
+        paint(image, width, height, palette);
         dither(image, width, height);
+
+        Graphics2D g = image.createGraphics();
+        g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+        g.setColor(new Color(255, 255, 255, 170));
+        g.setFont(new Font("SansSerif", Font.PLAIN, Math.max(12, height / 38)));
+        g.drawString("concurrency-demo.onrender.com", height / 25, height - height / 25);
+        g.dispose();
 
         Files.createDirectories(target.toAbsolutePath().getParent());
         ImageIO.write(image, "png", target.toFile());
         return target;
     }
 
-    /**
-     * A continuous wave field.
-     *
-     * <p>Deliberately <em>not</em> a diagram. The page already draws progress bars;
-     * an illustration of progress bars sitting inside them reads as interface rather
-     * than as a downloaded file, which is the one thing this needs to look like.
-     *
-     * <p>It is also its own proof. PNG is compressed, so a range written to the wrong
-     * offset does not produce a tidy visible seam - it corrupts the stream and the
-     * file stops decoding altogether. Seeing any picture at all therefore means every
-     * byte arrived where it belonged; the hash underneath only confirms it.
-     */
-    private static void draw(Graphics2D g, int w, int h) {
-        // Warm stops, deliberately nothing like the interface that frames them. The
-        // page chrome is neutral grey so that the content is the only saturated thing
-        // on screen; an image sharing the UI's palette would camouflage into it and
-        // stop reading as a downloaded file at all.
-        final Color[] stops = {
-                new Color(0x2B1533),   // deep plum
-                new Color(0xB5296B),   // magenta
-                new Color(0xF2762E),   // orange
-                new Color(0xFFC24B),   // gold
-        };
-
+    /** Interfering waves: smooth, continuous, and with no flat regions to collapse. */
+    private static void paint(BufferedImage image, int w, int h, Palette palette) {
         for (int y = 0; y < h; y++) {
             double v = y / (double) h;
             for (int x = 0; x < w; x++) {
                 double u = x / (double) w;
-
-                // Interfering waves: cheap, smooth, and with no flat regions.
-                double a = Math.sin((u * 5.0 + v * 2.0) * Math.PI);
-                double b = Math.sin((u * 2.5 - v * 4.5) * Math.PI + 1.7);
-                double c = Math.sin(Math.hypot(u - 0.52, v - 0.44) * 7.5 * Math.PI);
+                double a = Math.sin((u * palette.freqA + v * 2.0) * Math.PI);
+                double b = Math.sin((u * palette.freqB - v * 4.5) * Math.PI + 1.7);
+                double c = Math.sin(Math.hypot(u - 0.52, v - 0.44) * palette.freqC * Math.PI);
                 // A finer layer, so the picture has texture up close rather than
-                // reading as soft blobs - and so it compresses less predictably.
+                // reading as soft blobs, and so it compresses less predictably.
                 double d = Math.sin((u * 21.0 + v * 13.0) * Math.PI) * 0.22;
-                double t = (a + b + c) / 3.0 + d;          // roughly -1 .. 1
-                t = Math.max(0, Math.min(1, (t + 1) / 2));  // 0 .. 1
-
-                g.setColor(ramp(stops, t));
-                g.fillRect(x, y, 1, 1);
+                double t = Math.max(0, Math.min(1, ((a + b + c) / 3.0 + d + 1) / 2));
+                image.setRGB(x, y, ramp(palette.stops, t).getRGB());
             }
         }
-
-        // A quiet caption, small enough that it never reads as interface.
-        double unit = h / 100.0;
-        g.setColor(new Color(255, 255, 255, 170));
-        g.setFont(new Font("SansSerif", Font.PLAIN, (int) (unit * 2.6)));
-        g.drawString("concurrency-demo.onrender.com", (int) (unit * 4), (int) (h - unit * 4));
     }
 
     /** Smooth interpolation across a list of colour stops. */
     private static Color ramp(Color[] stops, double t) {
-        t = Math.max(0, Math.min(1, t));
-        double scaled = t * (stops.length - 1);
+        double scaled = Math.max(0, Math.min(1, t)) * (stops.length - 1);
         int i = (int) Math.min(scaled, stops.length - 2);
         double f = scaled - i;
         Color a = stops[i], b = stops[i + 1];
@@ -130,34 +115,29 @@ public final class SampleImage {
                 (int) Math.round(a.getBlue()  + (b.getBlue()  - a.getBlue())  * f));
     }
 
-    /**
-     * Adds a faint deterministic dither.
-     *
-     * <p>Invisible at any sane viewing size, but it stops PNG's filters from
-     * collapsing the large flat regions - which is what keeps the file big enough
-     * for the download to be worth watching. The fixed seed keeps the SHA-256
-     * identical on every machine and every run.
-     */
     private static void dither(BufferedImage image, int w, int h) {
-        Random random = new Random(20260927L);
+        Random random = new Random(DITHER_SEED);
         for (int y = 0; y < h; y++) {
             for (int x = 0; x < w; x++) {
                 int rgb = image.getRGB(x, y);
                 int r = clamp(((rgb >> 16) & 0xFF) + random.nextInt(7) - 3);
-                int gg = clamp(((rgb >> 8) & 0xFF) + random.nextInt(7) - 3);
+                int g = clamp(((rgb >> 8) & 0xFF) + random.nextInt(7) - 3);
                 int b = clamp((rgb & 0xFF) + random.nextInt(7) - 3);
-                image.setRGB(x, y, (r << 16) | (gg << 8) | b);
+                image.setRGB(x, y, (r << 16) | (g << 8) | b);
             }
         }
     }
 
+    private static int clamp(int v) {
+        return v < 0 ? 0 : Math.min(v, 255);
+    }
+
     /**
-     * A small, undithered copy of the served image, for the page to show
-     * immediately.
+     * A small JPEG preview of an image file, served unthrottled.
      *
-     * <p>Necessary because the real file is deliberately throttled: fetching it
-     * just to preview it would leave the page looking broken for twenty seconds.
-     * This is served unthrottled and is a few tens of kilobytes.
+     * <p>Necessary because the library files are deliberately rate limited: fetching
+     * one just to show a thumbnail would leave the page looking broken for twenty
+     * seconds.
      */
     public static byte[] thumbnail(Path source, int width) throws IOException {
         BufferedImage full = ImageIO.read(source.toFile());
@@ -172,12 +152,8 @@ public final class SampleImage {
         g.drawImage(full, 0, 0, width, height, null);
         g.dispose();
 
-        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
         ImageIO.write(small, "jpg", out);
         return out.toByteArray();
-    }
-
-    private static int clamp(int v) {
-        return v < 0 ? 0 : Math.min(v, 255);
     }
 }
