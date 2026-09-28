@@ -173,22 +173,30 @@ It is the same idea as the Java code, in the language the browser speaks —
 
 ---
 
-### Using your own files
+### Adding your own files
 
-Run the server locally and the page grows a drop zone in the library rail:
+The library rail carries a drop zone. Drag in any photo or video and it joins the
+library, ready to race.
+
+On a **local run** it is open, because the server is bound to loopback and nobody
+else can reach it:
 
 ```bash
 java -jar target/completablefuture-demo-1.0.0.jar serve --port 18080
 ```
 
-Drag in any photo or video and it joins the library, ready to race. This works only
-on a local run, where the server binds to loopback. It is switched off on the
-deployed instance, because an open upload endpoint on a public URL is an anonymous
-file host: anyone could put anything on it, at the operator's expense and under the
-operator's name.
+On the **hosted instance** it needs a key. Set `DEMO_UPLOAD_KEY` in the Render
+dashboard, and enter the same value in the field under the drop zone; the browser
+remembers it after the first time. Without a key set, uploading is off entirely.
 
-So anything you want to demonstrate with, but would rather not publish, belongs
-here rather than in the repository.
+The key is the whole difference between *the owner can add files* and *the internet
+can*. An unauthenticated upload endpoint on a public URL is an anonymous file host:
+anyone who finds it can put anything there, billed to the operator and sitting under
+the operator's name.
+
+**Uploaded files are temporary.** They live in the container's scratch directory, so
+a restart or a redeploy clears them and the library returns to the files that ship
+with the jar. Upload again on the day if you need something specific.
 
 ### Credits
 

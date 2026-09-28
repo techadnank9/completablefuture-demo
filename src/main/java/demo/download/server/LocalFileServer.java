@@ -51,6 +51,8 @@ public final class LocalFileServer implements AutoCloseable {
     private final String singleFileName;      // non-null only in single-file mode
     /** Where uploads land. Null when uploading is not permitted. */
     private volatile Path uploadDir;
+    /** Required key for uploads. Null means no key needed (a loopback run). */
+    private volatile String uploadKey;
 
     private LocalFileServer(HttpServer server, ExecutorService serverPool,
                             List<LibraryFile> files, double perConnectionBytesPerSecond,
@@ -84,13 +86,15 @@ public final class LocalFileServer implements AutoCloseable {
     /**
      * Permits adding files through the page, storing them in {@code dir}.
      *
-     * <p>Only ever enabled for a server bound to loopback. A public instance with an
-     * open upload endpoint is an anonymous file host: anybody could put anything on
-     * it, at the operator's expense and under the operator's name. On your own
-     * machine none of that applies, and whatever you add stays on that machine.
+     * <p>A {@code key} of {@code null} means anyone who can reach the server may
+     * upload, which is only reasonable when it is bound to loopback. On a public
+     * address a key is required, because an unauthenticated upload endpoint is an
+     * anonymous file host: anybody who finds the URL could put anything on it, at
+     * the operator's expense and under the operator's name.
      */
-    public LocalFileServer allowUploads(Path dir) {
+    public LocalFileServer allowUploads(Path dir, String key) {
         this.uploadDir = dir;
+        this.uploadKey = key == null || key.isBlank() ? null : key;
         return this;
     }
 
@@ -164,7 +168,8 @@ public final class LocalFileServer implements AutoCloseable {
     /** Tells the page which optional features this instance offers. */
     private void handleConfig(HttpExchange exchange) throws IOException {
         exchange.getResponseHeaders().add("Cache-Control", "no-store");
-        sendText(exchange, 200, "{\"uploads\":" + uploadsAllowed() + "}",
+        sendText(exchange, 200,
+                "{\"uploads\":" + uploadsAllowed() + ",\"keyRequired\":" + (uploadKey != null) + "}",
                 "application/json; charset=utf-8");
     }
 
@@ -185,6 +190,19 @@ public final class LocalFileServer implements AutoCloseable {
             exchange.sendResponseHeaders(405, -1);
             exchange.close();
             return;
+        }
+
+        String required = uploadKey;
+        if (required != null) {
+            String offered = exchange.getRequestHeaders().getFirst("X-Upload-Key");
+            // Constant-time compare: this is a shared secret over the open internet.
+            if (offered == null || !java.security.MessageDigest.isEqual(
+                    offered.getBytes(StandardCharsets.UTF_8),
+                    required.getBytes(StandardCharsets.UTF_8))) {
+                sendText(exchange, 401, "wrong or missing upload key",
+                        "text/plain; charset=utf-8");
+                return;
+            }
         }
 
         String query = exchange.getRequestURI().getRawQuery();

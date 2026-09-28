@@ -68,9 +68,18 @@ public final class ServeCommand {
         boolean hosted = System.getenv("PORT") != null;
         String host = hosted ? "0.0.0.0" : "127.0.0.1";
         LocalFileServer server = LocalFileServer.start(library, throttle, 0, host, port);
+
+        // Loopback: no key, nobody else can reach it anyway. Public: a key is the
+        // difference between "the owner can add files" and "the internet can".
+        String key = System.getenv("DEMO_UPLOAD_KEY");
         if (!hosted) {
-            server.allowUploads(workDir);
-            Log.info("Local run: drag your own photos or videos onto the page to add them");
+            server.allowUploads(workDir, null);
+            Log.info("Drag your own photos or videos onto the page to add them");
+        } else if (key != null && !key.isBlank()) {
+            server.allowUploads(workDir, key);
+            Log.info("Uploads enabled, key required (DEMO_UPLOAD_KEY)");
+        } else {
+            Log.info("Uploads disabled: set DEMO_UPLOAD_KEY to enable them here");
         }
 
         long largest = library.stream().mapToLong(LibraryFile::size).max().orElse(0);
