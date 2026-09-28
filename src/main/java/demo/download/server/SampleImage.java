@@ -133,6 +133,30 @@ public final class SampleImage {
     }
 
     /**
+     * A neutral tile for a file we cannot render a preview of, such as a video
+     * supplied by the user. Better than a broken image in the picker.
+     */
+    public static byte[] placeholder(String label) throws IOException {
+        int w = 480, h = 270;
+        BufferedImage img = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
+        Graphics2D g = img.createGraphics();
+        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+        g.setColor(new Color(0x22272D));
+        g.fillRect(0, 0, w, h);
+        g.setColor(new Color(0x7D8791));
+        g.setFont(new Font("SansSerif", Font.BOLD, 34));
+        String text = label == null || label.isBlank() ? "FILE" : label.toUpperCase();
+        int tw = g.getFontMetrics().stringWidth(text);
+        g.drawString(text, (w - tw) / 2, h / 2 + 12);
+        g.dispose();
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ImageIO.write(img, "jpg", out);
+        return out.toByteArray();
+    }
+
+    /**
      * A small JPEG preview of an image file, served unthrottled.
      *
      * <p>Necessary because the library files are deliberately rate limited: fetching

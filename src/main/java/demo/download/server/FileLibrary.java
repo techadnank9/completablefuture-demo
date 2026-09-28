@@ -13,6 +13,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
+import java.util.stream.Stream;
 
 /**
  * Builds the set of files the demo offers for download: two generated photographs
@@ -34,6 +35,13 @@ import java.util.concurrent.ExecutorService;
 public final class FileLibrary {
 
     private static final int THUMB_WIDTH = 760;
+    /**
+     * An excerpt from Big Buck Bunny, (c) Blender Foundation, licensed CC-BY 3.0 and
+     * published expressly for reuse. It is the standard test clip for exactly this
+     * kind of demonstration, which is why it ships here rather than anything scraped
+     * from a streaming site: this repository and the server are both public, so every
+     * file in the library is redistributed to anyone who opens the page.
+     */
     private static final String VIDEO_RESOURCE = "/files/drift.mp4";
     private static final String POSTER_RESOURCE = "/files/poster.jpg";
 
@@ -75,6 +83,53 @@ public final class FileLibrary {
         }
     }
 
+    /**
+     * Builds a library from a folder on the presenter's own machine.
+     *
+     * <p>Local only, by design. Files served this way are never committed and never
+     * deployed: they exist on the laptop running the command and nowhere else, so
+     * whatever you point it at stays yours.
+     */
+    public static List<LibraryFile> fromDirectory(Path dir) throws IOException {
+        if (!Files.isDirectory(dir)) {
+            throw new IOException("not a directory: " + dir);
+        }
+        List<LibraryFile> files = new ArrayList<>();
+        try (Stream<Path> entries = Files.list(dir)) {
+            for (Path file : entries.filter(Files::isRegularFile).sorted().toList()) {
+                String name = file.getFileName().toString();
+                String type = LocalFileServer.guessContentType(name);
+                if (type.equals("application/octet-stream")) {
+                    continue;                       // not something a browser can show
+                }
+                boolean image = type.startsWith("image/");
+                byte[] thumb = image ? SampleImage.thumbnail(file, THUMB_WIDTH)
+                                     : SampleImage.placeholder(extensionOf(name));
+                files.add(new LibraryFile(slug(name), stripExtension(name), name,
+                        image ? "Photo" : "Video", type, file, Files.size(file), thumb));
+            }
+        }
+        if (files.isEmpty()) {
+            throw new IOException("no images or videos found in " + dir);
+        }
+        files.forEach(f -> Log.detail("library: %s (%s, %,d bytes)", f.fileName(), f.kind(), f.size()));
+        return List.copyOf(files);
+    }
+
+    private static String slug(String name) {
+        return name.toLowerCase().replaceAll("[^a-z0-9]+", "-").replaceAll("(^-|-$)", "");
+    }
+
+    private static String stripExtension(String name) {
+        int dot = name.lastIndexOf('.');
+        return dot > 0 ? name.substring(0, dot) : name;
+    }
+
+    private static String extensionOf(String name) {
+        int dot = name.lastIndexOf('.');
+        return dot > 0 && dot < name.length() - 1 ? name.substring(dot + 1) : "file";
+    }
+
     private static LibraryFile photo(Path dir, String id, String title,
                                      SampleImage.Palette palette, int sizeMb) {
         try {
@@ -104,7 +159,8 @@ public final class FileLibrary {
             try (InputStream p = FileLibrary.class.getResourceAsStream(POSTER_RESOURCE)) {
                 poster = p == null ? null : p.readAllBytes();
             }
-            return java.util.Optional.of(new LibraryFile("drift", "Drift", "drift.mp4",
+            return java.util.Optional.of(new LibraryFile("bigbuckbunny",
+                    "Big Buck Bunny", "big-buck-bunny.mp4",
                     "Video", "video/mp4", file, Files.size(file), poster));
         } catch (IOException e) {
             Log.warn("could not unpack the bundled video (%s) - serving photos only", e.getMessage());

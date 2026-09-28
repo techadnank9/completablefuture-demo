@@ -40,12 +40,17 @@ import java.util.stream.Collectors;
  */
 public final class LocalFileServer implements AutoCloseable {
 
+    /** Generous, but not unbounded. */
+    private static final long MAX_UPLOAD_BYTES = 300L * 1024 * 1024;
+
     private final HttpServer server;
     private final ExecutorService serverPool;
     private final Map<String, LibraryFile> byId = new LinkedHashMap<>();
     private final double perConnectionBytesPerSecond;
     private final ThrottledOutputStream.Limiter globalLimiter;
     private final String singleFileName;      // non-null only in single-file mode
+    /** Where uploads land. Null when uploading is not permitted. */
+    private volatile Path uploadDir;
 
     private LocalFileServer(HttpServer server, ExecutorService serverPool,
                             List<LibraryFile> files, double perConnectionBytesPerSecond,
@@ -76,6 +81,23 @@ public final class LocalFileServer implements AutoCloseable {
         return start(files, perConnectionMbps, totalMbps, host, port, null);
     }
 
+    /**
+     * Permits adding files through the page, storing them in {@code dir}.
+     *
+     * <p>Only ever enabled for a server bound to loopback. A public instance with an
+     * open upload endpoint is an anonymous file host: anybody could put anything on
+     * it, at the operator's expense and under the operator's name. On your own
+     * machine none of that applies, and whatever you add stays on that machine.
+     */
+    public LocalFileServer allowUploads(Path dir) {
+        this.uploadDir = dir;
+        return this;
+    }
+
+    public boolean uploadsAllowed() {
+        return uploadDir != null;
+    }
+
     private static LocalFileServer start(List<LibraryFile> files, double perConnectionMbps,
                                          double totalMbps, String host, int port,
                                          String singleFileName) throws IOException {
@@ -92,6 +114,8 @@ public final class LocalFileServer implements AutoCloseable {
         // Longer prefixes win, so these never collide with the catch-all page route.
         http.createContext("/health", LocalFileServer::handleHealth);
         http.createContext("/api/files", instance::handleList);
+        http.createContext("/api/config", instance::handleConfig);
+        http.createContext("/api/upload", instance::handleUpload);
         http.createContext("/files/", instance::handleLibraryFile);
         http.createContext("/thumb/", instance::handleThumb);
 
@@ -135,6 +159,87 @@ public final class LocalFileServer implements AutoCloseable {
                 .collect(Collectors.joining(",", "[", "]"));
         exchange.getResponseHeaders().add("Cache-Control", "no-store");
         sendText(exchange, 200, json, "application/json; charset=utf-8");
+    }
+
+    /** Tells the page which optional features this instance offers. */
+    private void handleConfig(HttpExchange exchange) throws IOException {
+        exchange.getResponseHeaders().add("Cache-Control", "no-store");
+        sendText(exchange, 200, "{\"uploads\":" + uploadsAllowed() + "}",
+                "application/json; charset=utf-8");
+    }
+
+    /**
+     * Accepts a file from the page and adds it to the library.
+     *
+     * <p>Raw body, with the name in the query string: enough for a local tool, and it
+     * avoids pulling in a multipart parser for a project that carries no dependencies.
+     */
+    private void handleUpload(HttpExchange exchange) throws IOException {
+        Path dir = uploadDir;
+        if (dir == null) {
+            sendText(exchange, 403, "uploads are disabled on this server",
+                    "text/plain; charset=utf-8");
+            return;
+        }
+        if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
+            exchange.sendResponseHeaders(405, -1);
+            exchange.close();
+            return;
+        }
+
+        String query = exchange.getRequestURI().getRawQuery();
+        String rawName = query == null ? "" : query.replaceFirst("^name=", "");
+        String name = sanitize(java.net.URLDecoder.decode(rawName, StandardCharsets.UTF_8));
+        String type = guessContentType(name);
+        if (type.equals("application/octet-stream")) {
+            sendText(exchange, 415, "only images and videos can be added",
+                    "text/plain; charset=utf-8");
+            return;
+        }
+
+        Path target = dir.resolve(name);
+        long written;
+        try (java.io.InputStream in = exchange.getRequestBody()) {
+            written = Files.copy(in, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        }
+        if (written > MAX_UPLOAD_BYTES) {
+            Files.deleteIfExists(target);
+            sendText(exchange, 413, "file is larger than the 300 MB limit",
+                    "text/plain; charset=utf-8");
+            return;
+        }
+
+        boolean image = type.startsWith("image/");
+        byte[] thumb = image ? SampleImage.thumbnail(target, 760)
+                             : SampleImage.placeholder(extensionOf(name));
+        String id = slug(name);
+        byId.put(id, new LibraryFile(id, stripExtension(name), name,
+                image ? "Photo" : "Video", type, target, written, thumb));
+
+        Log.info("added to library: %s (%,d bytes)", name, written);
+        sendText(exchange, 200, "{\"id\":\"" + id + "\"}", "application/json; charset=utf-8");
+    }
+
+    /** Strips any path components, so an upload cannot escape its directory. */
+    private static String sanitize(String name) {
+        String base = name.replace('\\', '/');
+        base = base.substring(base.lastIndexOf('/') + 1);
+        base = base.replaceAll("[^A-Za-z0-9._-]", "_");
+        return base.isBlank() ? "upload.bin" : base;
+    }
+
+    private static String slug(String name) {
+        return name.toLowerCase().replaceAll("[^a-z0-9]+", "-").replaceAll("(^-|-$)", "");
+    }
+
+    private static String stripExtension(String name) {
+        int dot = name.lastIndexOf('.');
+        return dot > 0 ? name.substring(0, dot) : name;
+    }
+
+    private static String extensionOf(String name) {
+        int dot = name.lastIndexOf('.');
+        return dot > 0 && dot < name.length() - 1 ? name.substring(dot + 1) : "file";
     }
 
     private void handleLibraryFile(HttpExchange exchange) throws IOException {

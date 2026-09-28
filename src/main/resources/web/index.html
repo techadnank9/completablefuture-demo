@@ -73,6 +73,20 @@
     background-size:400% 100%;animation:shimmer 1.4s ease-in-out infinite}
   @keyframes shimmer{from{background-position:100% 0}to{background-position:0 0}}
   @media (prefers-reduced-motion:reduce){.skel{animation:none}}
+  .dropzone{margin-top:10px;border:1.5px dashed var(--border-strong);border-radius:10px;
+    padding:16px 10px;text-align:center;cursor:pointer;transition:border-color .12s,background .12s}
+  .dropzone:hover,.dropzone.over{border-color:var(--blue);background:var(--surface-2)}
+  .dropzone p{margin:0;font-size:12.5px;color:var(--text-2);line-height:1.5}
+  .dropzone span{color:var(--text-3);font-size:11.5px}
+  .dropzone.busy{opacity:.6;pointer-events:none}
+
+  /* The chosen file, shown where the work happens rather than only in the rail. */
+  .selected{display:flex;align-items:center;gap:15px;background:var(--surface);
+    border:1px solid var(--border);border-radius:13px;padding:13px 16px;margin:0 0 4px}
+  .selected img{width:112px;height:63px;object-fit:cover;border-radius:7px;flex:none;
+                background:var(--track)}
+  .selected .n{font-size:16px;font-weight:620;color:var(--text)}
+  .selected .m{font-family:var(--mono);font-size:12px;color:var(--text-3);margin-top:4px}
   .libnote{font-size:12.5px;color:var(--text-3);padding:6px 4px 0;border-top:1px solid var(--border);
            margin-top:4px;line-height:1.45}
 
@@ -198,8 +212,13 @@
     <div id="picker">
       <div class="skel"></div><div class="skel"></div><div class="skel"></div>
     </div>
-    <p class="libnote">Every file is served from this page's own server, capped at
-      0.4 MB/s per connection.</p>
+    <div class="dropzone" id="dropzone" hidden>
+      <input type="file" id="fileInput" accept="image/*,video/*" hidden>
+      <p>Drop a photo or video here<br><span>or click to choose one</span></p>
+    </div>
+    <p class="libnote">Served from this page's own server, capped at 0.4 MB/s per
+      connection. Video clip from <i>Big Buck Bunny</i>, &copy; Blender Foundation,
+      CC&nbsp;BY&nbsp;3.0.</p>
   </aside>
 
   <main class="stage">
@@ -214,7 +233,13 @@
     that shows, or a video that plays, means every byte arrived where it belonged.
   </p>
 
-  <div class="split"><span class="arm"></span><span id="pickedLine">choose a file</span><span class="arm"></span></div>
+  <div class="selected">
+    <img id="selThumb" alt="" />
+    <div>
+      <div class="n" id="selName">Choose a file</div>
+      <div class="m" id="selMeta">from the library on the left</div>
+    </div>
+  </div>
 
   <div class="controls">
     <button class="run" id="run">Download both ways</button>
@@ -367,7 +392,9 @@ function select(file){
   current = file;
   document.querySelectorAll('.item').forEach(el =>
     el.setAttribute('aria-pressed', String(el.dataset.id === file.id)));
-  $('pickedLine').textContent = `${file.fileName} · ${human(file.size)} · fetched two ways`;
+  $('selThumb').src = `/thumb/${file.id}`;
+  $('selName').textContent = file.title;
+  $('selMeta').textContent = `${file.fileName} · ${human(file.size)} · ${file.contentType}`;
   // A different file invalidates the comparison table.
   history.length = 0;
   $('histTable').style.display = 'none';
@@ -559,6 +586,54 @@ $('run').addEventListener('click', async () => {
   }
 });
 
+// ── adding your own files, on a local run only ───────────────────────
+async function setUpUploads(){
+  let allowed = false;
+  try {
+    const cfg = await (await fetch('/api/config', { cache:'no-store' })).json();
+    allowed = !!cfg.uploads;
+  } catch (e) { /* older server: just leave it off */ }
+  if(!allowed) return;
+
+  const zone = $('dropzone'), input = $('fileInput');
+  zone.hidden = false;
+
+  const send = async file => {
+    zone.classList.add('busy');
+    zone.querySelector('p').textContent = `Adding ${file.name}\u2026`;
+    try{
+      const res = await fetch('/api/upload?name=' + encodeURIComponent(file.name),
+        { method:'POST', body:file });
+      if(!res.ok) throw new Error(await res.text());
+      const { id } = await res.json();
+      await loadLibrary();
+      const added = files.find(f => f.id === id);
+      if(added) select(added);
+    }catch(e){
+      $('err').textContent = 'Could not add that file: ' + e.message;
+      $('err').style.display = 'block';
+    }finally{
+      zone.classList.remove('busy');
+      zone.querySelector('p').innerHTML =
+        'Drop a photo or video here<br><span>or click to choose one</span>';
+    }
+  };
+
+  zone.addEventListener('click', () => input.click());
+  input.addEventListener('change', () => { if(input.files[0]) send(input.files[0]); });
+  ['dragenter','dragover'].forEach(ev => zone.addEventListener(ev, e => {
+    e.preventDefault(); zone.classList.add('over');
+  }));
+  ['dragleave','drop'].forEach(ev => zone.addEventListener(ev, e => {
+    e.preventDefault(); zone.classList.remove('over');
+  }));
+  zone.addEventListener('drop', e => {
+    const file = e.dataTransfer.files[0];
+    if(file) send(file);
+  });
+}
+
+setUpUploads();
 loadLibrary().catch(e => {
   $('err').textContent = 'Could not load the file library: ' + e.message;
   $('err').style.display = 'block';

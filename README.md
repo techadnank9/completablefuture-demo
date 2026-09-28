@@ -154,7 +154,7 @@ curl -o /dev/null -D - -r 0-1023 <url>     # expect 206 and Content-Range
 **https://concurrency-demo.onrender.com** — pick a file and press the button.
 
 The page serves a small library: two generated photographs (8.97 MB and 4.64 MB)
-and a real 720p H.264 video (5.66 MB). Choose one, and both sides fetch it at the
+and a 720p video clip (6.18 MB). Choose one, and both sides fetch it at the
 same instant — the left over a single connection, the right split into byte ranges
 in parallel. Each side delivers its own copy, which you can open, play or save.
 
@@ -170,6 +170,31 @@ stops coming once bandwidth, not concurrency, is the limit.
 
 It is the same idea as the Java code, in the language the browser speaks —
 `supplyAsync` + `allOf` there, `fetch` + `Promise.all` here.
+
+---
+
+### Using your own files
+
+Run the server locally and the page grows a drop zone in the library rail:
+
+```bash
+java -jar target/completablefuture-demo-1.0.0.jar serve --port 18080
+```
+
+Drag in any photo or video and it joins the library, ready to race. This works only
+on a local run, where the server binds to loopback. It is switched off on the
+deployed instance, because an open upload endpoint on a public URL is an anonymous
+file host: anyone could put anything on it, at the operator's expense and under the
+operator's name.
+
+So anything you want to demonstrate with, but would rather not publish, belongs
+here rather than in the repository.
+
+### Credits
+
+The video clip is an excerpt from *Big Buck Bunny*, © Blender Foundation
+(peach.blender.org), licensed CC BY 3.0. The photographs are generated at startup
+by the project itself.
 
 ---
 

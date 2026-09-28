@@ -62,7 +62,16 @@ public final class ServeCommand {
         // 0.0.0.0, not loopback: the platform routes external traffic to us. No global
         // cap - the per-connection limit is the whole mechanism, and a shared ceiling
         // would cap the concurrent round this is meant to show.
-        LocalFileServer server = LocalFileServer.start(library, throttle, 0, "0.0.0.0", port);
+        // Bind to 0.0.0.0 when hosted so the platform can route to us; bind to
+        // loopback when run locally, which is also the only case where adding your
+        // own files through the page is enabled.
+        boolean hosted = System.getenv("PORT") != null;
+        String host = hosted ? "0.0.0.0" : "127.0.0.1";
+        LocalFileServer server = LocalFileServer.start(library, throttle, 0, host, port);
+        if (!hosted) {
+            server.allowUploads(workDir);
+            Log.info("Local run: drag your own photos or videos onto the page to add them");
+        }
 
         long largest = library.stream().mapToLong(LibraryFile::size).max().orElse(0);
         Log.info("Serving %d files on port %d, largest %s", library.size(), port, Bytes.human(largest));
