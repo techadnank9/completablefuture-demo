@@ -1,0 +1,27 @@
+# Render Blueprint.
+#
+# Deploys the demo's own LocalFileServer as a public file server, so that
+# `java demo.App download --url <service-url>/sample_video.mp4` shows a genuine
+# speedup. Public CDNs do not limit each connection - that is the point of a CDN -
+# so downloading from one in parallel gains almost nothing. This service does.
+#
+# New > Blueprint > pick this repo. Render reads this file.
+services:
+  - type: web
+    # Gives https://concurrency-demo.onrender.com (verified unclaimed).
+    name: concurrency-demo
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    region: ohio
+    healthCheckPath: /health
+    envVars:
+      # Size of the served file, in MB.
+      - key: DEMO_SIZE_MB
+        value: "8"
+      # Per-connection ceiling in MB/s. This is the setting that makes the demo
+      # work, and it must stay TIGHTER than the bandwidth available in the room:
+      # with 8 chunks the peak aggregate is 8x this number. At 0.4 that is about
+      # 26 Mbps, and the sequential round takes roughly 20 seconds.
+      - key: DEMO_THROTTLE_MBPS
+        value: "0.4"

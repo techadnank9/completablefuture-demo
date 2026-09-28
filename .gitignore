@@ -1,0 +1,5 @@
+target/
+downloads/
+*.class
+.idea/
+*.iml

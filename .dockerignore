@@ -1,0 +1,7 @@
+target/
+downloads/
+.git/
+.idea/
+*.iml
+*.pptx
+README.md
