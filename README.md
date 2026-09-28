@@ -369,29 +369,31 @@ only the wall-clock cost of the suite changes.
 
 ## Slides
 
-`CompletableFuture-Presentation.pptx` — 10 slides, speaker notes on every one.
+`CompletableFuture-Presentation.pptx` — 11 slides, speaker notes on every one.
+`SPEAKER-SCRIPT.md` — the same talk written out word for word, with timings.
 Self-contained: every number and result is on a slide, so the live demo is a bonus
 rather than a dependency. If the wifi dies, the talk still works.
 
 1. Title
 2. The problem — a blocked thread is asleep, not slow (0% CPU for 20 seconds)
-3. Why the API looks like it does — `Future` (2004) vs `CompletableFuture` (2014)
-4. The shape — fan out, fan in, and why no lock is needed
-5. Measured — 21.32 s vs 2.61 s on the 8.97 MB photo, matching hashes
-6. Sizing the pool — the throughput curve flattening
-7. `thenCompose` vs `thenCombine`
-8. Resilience — three failure modes, three tools
-9. The traps — the four things tutorials leave out
-10. Takeaways
+3. What it actually is — the concept, in plain language
+4. Why the API looks like it does — `Future` (2004) vs `CompletableFuture` (2014)
+5. The shape — fan out, fan in, and why no lock is needed
+6. Measured — 21.32 s vs 2.61 s on the 8.97 MB photo, matching hashes
+7. Sizing the pool — the throughput curve flattening
+8. `thenCompose` vs `thenCombine`
+9. Resilience — three failure modes, three tools
+10. The traps — the four things tutorials leave out
+11. Takeaways, with a QR to the live demo
 
 The final slide carries a QR code for the live demo, so the room can scan it and
 race a file on their own phones while you take questions.
 
-Slide 9 is the one worth rehearsing: the common-pool default, `thenApply` making no
+Slide 10 is the one worth rehearsing: the common-pool default, `thenApply` making no
 promise about which thread runs it, `allOf` waiting for every branch even after one
 has failed, and `orTimeout` giving up without cancelling anything.
 
-Re-measure on the presentation laptop and update the figures on slides 5 and 6 if
+Re-measure on the presentation laptop and update the figures on slides 6 and 7 if
 they differ noticeably from the ones shipped here.
 
 ---
