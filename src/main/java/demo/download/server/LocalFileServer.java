@@ -250,8 +250,17 @@ public final class LocalFileServer implements AutoCloseable {
         }
 
         boolean image = type.startsWith("image/");
-        byte[] thumb = image ? SampleImage.thumbnail(target, 760)
-                             : SampleImage.placeholder(extensionOf(name));
+        byte[] thumb = null;
+        if (image) {
+            try {
+                thumb = SampleImage.thumbnail(target, 760);
+            } catch (IOException | RuntimeException e) {
+                thumb = null;                        // a format ImageIO cannot read
+            }
+        }
+        if (thumb == null) {
+            thumb = SampleImage.placeholder(extensionOf(name));
+        }
         String id = slug(name);
         synchronized (this) {
             byId.put(id, new LibraryFile(id, stripExtension(name), name,
@@ -535,18 +544,36 @@ public final class LocalFileServer implements AutoCloseable {
         }
     }
 
+    /**
+     * Media type by extension.
+     *
+     * <p>This doubles as the upload allowlist, so it covers what phones and cameras
+     * actually produce rather than only what this project generates. SVG is
+     * deliberately absent: it can carry script, and serving one from this origin
+     * would hand a visitor a way to run code on it.
+     */
     static String guessContentType(String name) {
         String lower = name.toLowerCase();
-        if (lower.endsWith(".png")) {
-            return "image/png";
-        }
-        if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) {
-            return "image/jpeg";
-        }
-        if (lower.endsWith(".mp4")) {
-            return "video/mp4";
-        }
-        return "application/octet-stream";
+        int dot = lower.lastIndexOf('.');
+        String ext = dot < 0 ? "" : lower.substring(dot + 1);
+        return switch (ext) {
+            case "png" -> "image/png";
+            case "jpg", "jpeg" -> "image/jpeg";
+            case "gif" -> "image/gif";
+            case "webp" -> "image/webp";
+            case "avif" -> "image/avif";
+            case "heic", "heif" -> "image/heic";
+            case "bmp" -> "image/bmp";
+            case "tif", "tiff" -> "image/tiff";
+            case "mp4", "m4v" -> "video/mp4";
+            case "mov" -> "video/quicktime";
+            case "webm" -> "video/webm";
+            case "mkv" -> "video/x-matroska";
+            case "avi" -> "video/x-msvideo";
+            case "ogv" -> "video/ogg";
+            case "mpeg", "mpg" -> "video/mpeg";
+            default -> "application/octet-stream";
+        };
     }
 
     @Override

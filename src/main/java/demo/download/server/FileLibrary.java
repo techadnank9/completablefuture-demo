@@ -103,8 +103,17 @@ public final class FileLibrary {
                     continue;                       // not something a browser can show
                 }
                 boolean image = type.startsWith("image/");
-                byte[] thumb = image ? SampleImage.thumbnail(file, THUMB_WIDTH)
-                                     : SampleImage.placeholder(extensionOf(name));
+                byte[] thumb = null;
+                if (image) {
+                    try {
+                        thumb = SampleImage.thumbnail(file, THUMB_WIDTH);
+                    } catch (IOException | RuntimeException e) {
+                        thumb = null;
+                    }
+                }
+                if (thumb == null) {
+                    thumb = SampleImage.placeholder(extensionOf(name));
+                }
                 files.add(new LibraryFile(slug(name), stripExtension(name), name,
                         image ? "Photo" : "Video", type, file, Files.size(file), thumb));
             }

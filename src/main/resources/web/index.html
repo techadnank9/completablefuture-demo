@@ -80,10 +80,10 @@
   .dropzone span{color:var(--text-3);font-size:11.5px}
   .dropzone.busy{opacity:.6;pointer-events:none}
   .uploadnote{margin:8px 4px 0;font-size:12px;color:var(--text-3);line-height:1.45}
-  .item .rm{flex:none;width:22px;height:22px;border-radius:6px;border:0;cursor:pointer;
-    background:transparent;color:var(--text-3);font-family:inherit;font-size:15px;line-height:1;
-    display:flex;align-items:center;justify-content:center;opacity:0;transition:opacity .12s}
-  .item:hover .rm,.item[aria-pressed="true"] .rm{opacity:1}
+  .item .rm{flex:none;width:26px;height:26px;border-radius:7px;border:0;cursor:pointer;
+    background:var(--surface-2);color:var(--text-3);font-family:inherit;font-size:16px;
+    line-height:1;display:flex;align-items:center;justify-content:center;
+    transition:background .12s,color .12s}
   .item .rm:hover{background:var(--raised);color:var(--red)}
 
   /* The chosen file, shown where the work happens rather than only in the rail. */
@@ -222,8 +222,9 @@
       <input type="file" id="fileInput" accept="image/*,video/*" hidden>
       <p>Drop a photo or video here<br><span>or click to choose one</span></p>
     </div>
-    <p class="uploadnote" id="uploadnote" hidden>Images and video, up to 120 MB. Files you
-      add are cleared after an hour.</p>
+    <p class="uploadnote" id="uploadnote" hidden>Photos and video &mdash; jpg, png, gif, webp,
+      heic, mp4, mov, webm and more &mdash; up to 120 MB. Files you add are cleared after an
+      hour.</p>
     <p class="libnote">Served from this page's own server, capped at 0.4 MB/s per
       connection. Video clip from <i>Big Buck Bunny</i>, &copy; Blender Foundation,
       CC&nbsp;BY&nbsp;3.0.</p>
