@@ -79,12 +79,12 @@
   .dropzone p{margin:0;font-size:12.5px;color:var(--text-2);line-height:1.5}
   .dropzone span{color:var(--text-3);font-size:11.5px}
   .dropzone.busy{opacity:.6;pointer-events:none}
-  .keyrow{margin-top:8px;display:none}
-  .keyrow input{width:100%;background:var(--surface-2);border:1px solid var(--border);
-    border-radius:8px;padding:8px 10px;color:var(--text);font-family:var(--mono);
-    font-size:12px}
-  .keyrow input:focus{outline:2px solid var(--blue);outline-offset:1px;border-color:transparent}
-  .keyrow p{margin:6px 0 0;font-size:11.5px;color:var(--text-3);line-height:1.45}
+  .uploadnote{margin:8px 4px 0;font-size:12px;color:var(--text-3);line-height:1.45}
+  .item .rm{flex:none;width:22px;height:22px;border-radius:6px;border:0;cursor:pointer;
+    background:transparent;color:var(--text-3);font-family:inherit;font-size:15px;line-height:1;
+    display:flex;align-items:center;justify-content:center;opacity:0;transition:opacity .12s}
+  .item:hover .rm,.item[aria-pressed="true"] .rm{opacity:1}
+  .item .rm:hover{background:var(--raised);color:var(--red)}
 
   /* The chosen file, shown where the work happens rather than only in the rail. */
   .selected{display:flex;align-items:center;gap:15px;background:var(--surface);
@@ -222,12 +222,8 @@
       <input type="file" id="fileInput" accept="image/*,video/*" hidden>
       <p>Drop a photo or video here<br><span>or click to choose one</span></p>
     </div>
-    <div class="keyrow" id="keyrow">
-      <input id="uploadKey" type="password" placeholder="upload key" autocomplete="off"
-             spellcheck="false" aria-label="Upload key">
-      <p id="keyhint">Needed to add files to the hosted server. Added files last until the
-        server next restarts.</p>
-    </div>
+    <p class="uploadnote" id="uploadnote" hidden>Images and video, up to 120 MB. Files you
+      add are cleared after an hour.</p>
     <p class="libnote">Served from this page's own server, capped at 0.4 MB/s per
       connection. Video clip from <i>Big Buck Bunny</i>, &copy; Blender Foundation,
       CC&nbsp;BY&nbsp;3.0.</p>
@@ -389,15 +385,32 @@ async function loadLibrary(){
         : '';
       b.innerHTML =
         `<span class="shot"><img src="/thumb/${f.id}" alt="" loading="lazy">${play}</span>` +
-        `<span><span class="t">${f.title}</span>` +
-        `<span class="m">${human(f.size)}</span></span>`;
-      b.addEventListener('click', () => select(f));
+        `<span style="flex:1"><span class="t">${f.title}</span>` +
+        `<span class="m">${human(f.size)}</span></span>` +
+        (f.removable ? `<span class="rm" role="button" tabindex="0" title="Remove">\u00d7</span>` : '');
+      b.addEventListener('click', e => {
+        if(e.target.classList.contains('rm')){ e.stopPropagation(); remove(f); return; }
+        select(f);
+      });
       section.appendChild(b);
     });
     host.appendChild(section);
   });
 
   if(files.length) select(files[0]);
+}
+
+async function remove(file){
+  try{
+    const res = await fetch('/api/delete?id=' + encodeURIComponent(file.id), { method:'POST' });
+    if(!res.ok) throw new Error(await res.text());
+    const wasCurrent = current && current.id === file.id;
+    await loadLibrary();
+    if(wasCurrent && files.length) select(files[0]);
+  }catch(e){
+    $('err').textContent = 'Could not remove that file: ' + e.message;
+    $('err').style.display = 'block';
+  }
 }
 
 function select(file){
@@ -600,40 +613,24 @@ $('run').addEventListener('click', async () => {
 
 // ── adding your own files, on a local run only ───────────────────────
 async function setUpUploads(){
-  let allowed = false, cfgKeyRequired = false;
+  let allowed = false;
   try {
     const cfg = await (await fetch('/api/config', { cache:'no-store' })).json();
     allowed = !!cfg.uploads;
-    cfgKeyRequired = !!cfg.keyRequired;
   } catch (e) { /* older server: just leave it off */ }
   if(!allowed) return;
 
   const zone = $('dropzone'), input = $('fileInput');
   zone.hidden = false;
 
-  // A key is required on a public instance. Remembered locally so it is typed once.
-  const keyed = !!cfgKeyRequired;
-  const keyBox = $('uploadKey');
-  if(keyed){
-    $('keyrow').style.display = 'block';
-    try { keyBox.value = localStorage.getItem('cf-upload-key') || ''; } catch(e){}
-    keyBox.addEventListener('change', () => {
-      try { localStorage.setItem('cf-upload-key', keyBox.value.trim()); } catch(e){}
-    });
-  }
+  $('uploadnote').hidden = false;
 
   const send = async file => {
     zone.classList.add('busy');
     zone.querySelector('p').textContent = `Adding ${file.name}\u2026`;
     try{
-      const headers = {};
-      if(keyed){
-        const k = keyBox.value.trim();
-        if(!k) throw new Error('enter the upload key first');
-        headers['X-Upload-Key'] = k;
-      }
       const res = await fetch('/api/upload?name=' + encodeURIComponent(file.name),
-        { method:'POST', body:file, headers });
+        { method:'POST', body:file });
       if(!res.ok) throw new Error(await res.text());
       const { id } = await res.json();
       await loadLibrary();

@@ -12,6 +12,7 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -40,8 +41,10 @@ import java.util.stream.Collectors;
  */
 public final class LocalFileServer implements AutoCloseable {
 
-    /** Generous, but not unbounded. */
-    private static final long MAX_UPLOAD_BYTES = 300L * 1024 * 1024;
+    /** Bounds that keep an open endpoint from becoming an anonymous file host. */
+    private static final long MAX_UPLOAD_BYTES = 120L * 1024 * 1024;
+    private static final int MAX_UPLOADS = 6;
+    private static final Duration UPLOAD_TTL = Duration.ofHours(1);
 
     private final HttpServer server;
     private final ExecutorService serverPool;
@@ -51,8 +54,9 @@ public final class LocalFileServer implements AutoCloseable {
     private final String singleFileName;      // non-null only in single-file mode
     /** Where uploads land. Null when uploading is not permitted. */
     private volatile Path uploadDir;
-    /** Required key for uploads. Null means no key needed (a loopback run). */
-    private volatile String uploadKey;
+    /** Ids of uploaded files, oldest first, with the instant each arrived. */
+    private final Map<String, java.time.Instant> uploaded = new LinkedHashMap<>();
+    private java.util.concurrent.ScheduledExecutorService sweeper;
 
     private LocalFileServer(HttpServer server, ExecutorService serverPool,
                             List<LibraryFile> files, double perConnectionBytesPerSecond,
@@ -86,16 +90,40 @@ public final class LocalFileServer implements AutoCloseable {
     /**
      * Permits adding files through the page, storing them in {@code dir}.
      *
-     * <p>A {@code key} of {@code null} means anyone who can reach the server may
-     * upload, which is only reasonable when it is bound to loopback. On a public
-     * address a key is required, because an unauthenticated upload endpoint is an
-     * anonymous file host: anybody who finds the URL could put anything on it, at
-     * the operator's expense and under the operator's name.
+     * <p>Open to anyone who can reach the page, and kept harmless by what it accepts
+     * rather than by who is asking: images and video only, each one capped, only a
+     * few kept at a time, and all of them swept away after an hour. That leaves a
+     * demo feature rather than free storage for somebody else's payload.
      */
-    public LocalFileServer allowUploads(Path dir, String key) {
+    public LocalFileServer allowUploads(Path dir) {
         this.uploadDir = dir;
-        this.uploadKey = key == null || key.isBlank() ? null : key;
+        this.sweeper = Executors2.scheduler("sweep");
+        this.sweeper.scheduleAtFixedRate(this::sweepExpired, 5, 5,
+                java.util.concurrent.TimeUnit.MINUTES);
         return this;
+    }
+
+    /** Drops uploads older than the retention window. */
+    private synchronized void sweepExpired() {
+        java.time.Instant cutoff = java.time.Instant.now().minus(UPLOAD_TTL);
+        uploaded.entrySet().stream()
+                .filter(e -> e.getValue().isBefore(cutoff))
+                .map(Map.Entry::getKey)
+                .toList()
+                .forEach(this::forget);
+    }
+
+    /** Removes one uploaded file from the library and from disk. */
+    private synchronized void forget(String id) {
+        LibraryFile gone = byId.remove(id);
+        uploaded.remove(id);
+        if (gone != null) {
+            try {
+                Files.deleteIfExists(gone.path());
+            } catch (IOException ignored) {
+                // It will go with the container anyway.
+            }
+        }
     }
 
     public boolean uploadsAllowed() {
@@ -120,6 +148,7 @@ public final class LocalFileServer implements AutoCloseable {
         http.createContext("/api/files", instance::handleList);
         http.createContext("/api/config", instance::handleConfig);
         http.createContext("/api/upload", instance::handleUpload);
+        http.createContext("/api/delete", instance::handleDelete);
         http.createContext("/files/", instance::handleLibraryFile);
         http.createContext("/thumb/", instance::handleThumb);
 
@@ -158,9 +187,15 @@ public final class LocalFileServer implements AutoCloseable {
 
     /** The picker's data. Hand-rolled JSON; the project carries no JSON dependency. */
     private void handleList(HttpExchange exchange) throws IOException {
-        String json = byId.values().stream()
-                .map(LibraryFile::toJson)
-                .collect(Collectors.joining(",", "[", "]"));
+        String json;
+        synchronized (this) {
+            json = byId.values().stream()
+                    // Only files added through the page may be taken away again; the
+                    // ones shipped with the jar are not a visitor's to delete.
+                    .map(f -> f.toJson().replaceFirst("\\}$",
+                            ",\"removable\":" + uploaded.containsKey(f.id()) + "}"))
+                    .collect(Collectors.joining(",", "[", "]"));
+        }
         exchange.getResponseHeaders().add("Cache-Control", "no-store");
         sendText(exchange, 200, json, "application/json; charset=utf-8");
     }
@@ -169,7 +204,7 @@ public final class LocalFileServer implements AutoCloseable {
     private void handleConfig(HttpExchange exchange) throws IOException {
         exchange.getResponseHeaders().add("Cache-Control", "no-store");
         sendText(exchange, 200,
-                "{\"uploads\":" + uploadsAllowed() + ",\"keyRequired\":" + (uploadKey != null) + "}",
+                "{\"uploads\":" + uploadsAllowed() + "}",
                 "application/json; charset=utf-8");
     }
 
@@ -192,19 +227,6 @@ public final class LocalFileServer implements AutoCloseable {
             return;
         }
 
-        String required = uploadKey;
-        if (required != null) {
-            String offered = exchange.getRequestHeaders().getFirst("X-Upload-Key");
-            // Constant-time compare: this is a shared secret over the open internet.
-            if (offered == null || !java.security.MessageDigest.isEqual(
-                    offered.getBytes(StandardCharsets.UTF_8),
-                    required.getBytes(StandardCharsets.UTF_8))) {
-                sendText(exchange, 401, "wrong or missing upload key",
-                        "text/plain; charset=utf-8");
-                return;
-            }
-        }
-
         String query = exchange.getRequestURI().getRawQuery();
         String rawName = query == null ? "" : query.replaceFirst("^name=", "");
         String name = sanitize(java.net.URLDecoder.decode(rawName, StandardCharsets.UTF_8));
@@ -222,7 +244,7 @@ public final class LocalFileServer implements AutoCloseable {
         }
         if (written > MAX_UPLOAD_BYTES) {
             Files.deleteIfExists(target);
-            sendText(exchange, 413, "file is larger than the 300 MB limit",
+            sendText(exchange, 413, "file is larger than the 120 MB limit",
                     "text/plain; charset=utf-8");
             return;
         }
@@ -231,11 +253,49 @@ public final class LocalFileServer implements AutoCloseable {
         byte[] thumb = image ? SampleImage.thumbnail(target, 760)
                              : SampleImage.placeholder(extensionOf(name));
         String id = slug(name);
-        byId.put(id, new LibraryFile(id, stripExtension(name), name,
-                image ? "Photo" : "Video", type, target, written, thumb));
+        synchronized (this) {
+            byId.put(id, new LibraryFile(id, stripExtension(name), name,
+                    image ? "Photo" : "Video", type, target, written, thumb));
+            uploaded.put(id, java.time.Instant.now());
+            while (uploaded.size() > MAX_UPLOADS) {
+                forget(uploaded.keySet().iterator().next());
+            }
+        }
 
         Log.info("added to library: %s (%,d bytes)", name, written);
         sendText(exchange, 200, "{\"id\":\"" + id + "\"}", "application/json; charset=utf-8");
+    }
+
+    /**
+     * Removes a previously uploaded file.
+     *
+     * <p>Refuses anything that came with the jar, so the shipped library cannot be
+     * emptied by whoever happens to open the page.
+     */
+    private void handleDelete(HttpExchange exchange) throws IOException {
+        if (uploadDir == null) {
+            sendText(exchange, 403, "uploads are disabled on this server",
+                    "text/plain; charset=utf-8");
+            return;
+        }
+        if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
+            exchange.sendResponseHeaders(405, -1);
+            exchange.close();
+            return;
+        }
+        String query = exchange.getRequestURI().getRawQuery();
+        String id = query == null ? "" : query.replaceFirst("^id=", "");
+
+        synchronized (this) {
+            if (!uploaded.containsKey(id)) {
+                sendText(exchange, 403, "only files you added can be removed",
+                        "text/plain; charset=utf-8");
+                return;
+            }
+            forget(id);
+        }
+        Log.info("removed from library: %s", id);
+        sendText(exchange, 200, "{\"ok\":true}", "application/json; charset=utf-8");
     }
 
     /** Strips any path components, so an upload cannot escape its directory. */
@@ -323,6 +383,9 @@ public final class LocalFileServer implements AutoCloseable {
             // Without this the browser would serve the second round from cache and
             // "win" instantly.
             exchange.getResponseHeaders().add("Cache-Control", "no-store");
+            // Serve exactly the declared type; never let a browser sniff it into
+            // something it could execute.
+            exchange.getResponseHeaders().add("X-Content-Type-Options", "nosniff");
 
             if ("HEAD".equalsIgnoreCase(method)) {
                 exchange.getResponseHeaders().add("Content-Length", Long.toString(file.size()));
@@ -489,6 +552,7 @@ public final class LocalFileServer implements AutoCloseable {
     @Override
     public void close() {
         server.stop(0);
+        Executors2.shutdown(sweeper);
         Executors2.shutdown(serverPool);
     }
 }

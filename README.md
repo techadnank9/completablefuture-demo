@@ -176,27 +176,28 @@ It is the same idea as the Java code, in the language the browser speaks —
 ### Adding your own files
 
 The library rail carries a drop zone. Drag in any photo or video and it joins the
-library, ready to race.
+library, ready to race. Files you added carry a small × to remove them again; the
+ones bundled with the jar cannot be deleted.
 
-On a **local run** it is open, because the server is bound to loopback and nobody
-else can reach it:
+No sign-in, on the hosted site or locally. The endpoint is kept harmless by what it
+accepts rather than by who is asking:
 
-```bash
-java -jar target/completablefuture-demo-1.0.0.jar serve --port 18080
-```
+| Guard | Value |
+|---|---|
+| Accepted types | images and video only, by extension |
+| Size limit | 120 MB per file |
+| Files kept | the 6 most recent; older uploads are evicted |
+| Retention | swept after 1 hour |
+| Served with | `X-Content-Type-Options: nosniff`, and the declared media type |
 
-On the **hosted instance** it needs a key. Set `DEMO_UPLOAD_KEY` in the Render
-dashboard, and enter the same value in the field under the drop zone; the browser
-remembers it after the first time. Without a key set, uploading is off entirely.
+Those bounds are the reason no password is needed. An open endpoint that will hold
+an arbitrary file indefinitely is free storage for whatever somebody wants to
+distribute; one that takes a capped image or video and forgets it within the hour
+is a demo feature.
 
-The key is the whole difference between *the owner can add files* and *the internet
-can*. An unauthenticated upload endpoint on a public URL is an anonymous file host:
-anyone who finds it can put anything there, billed to the operator and sitting under
-the operator's name.
-
-**Uploaded files are temporary.** They live in the container's scratch directory, so
-a restart or a redeploy clears them and the library returns to the files that ship
-with the jar. Upload again on the day if you need something specific.
+**Uploads are temporary.** They live in the container's scratch directory, so a
+restart or redeploy clears them and the library returns to the files that ship with
+the jar. Upload again on the day if you need something specific.
 
 ### Credits
 
