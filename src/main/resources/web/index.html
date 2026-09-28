@@ -42,7 +42,39 @@
   html{scrollbar-color:#2E353C transparent}
   body{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);
        line-height:1.55;padding:44px 20px 80px;-webkit-font-smoothing:antialiased}
-  .wrap{max-width:1000px;margin:0 auto}
+  .wrap{max-width:1180px;margin:0 auto}
+
+  /* A two-pane shell: sources on the left, the work on the right. The layout
+     people already know from every file browser and media app, so nothing about
+     picking a file has to be learned. */
+  .app{display:grid;grid-template-columns:248px 1fr;gap:30px;align-items:start}
+  .library{position:sticky;top:34px;background:var(--surface);border:1px solid var(--border);
+           border-radius:14px;padding:14px 12px;max-height:calc(100vh - 68px);overflow:auto}
+  .libtitle{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);
+            margin:2px 0 12px;padding:0 4px;font-weight:600}
+  .group{margin-bottom:14px}
+  .group h3{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);
+            margin:0 0 7px;padding:0 4px;font-weight:600}
+  .item{display:flex;gap:10px;align-items:center;width:100%;text-align:left;cursor:pointer;
+    background:transparent;border:1px solid transparent;border-radius:9px;padding:7px;
+    color:inherit;font-family:inherit;margin-bottom:3px;transition:background .12s,border-color .12s}
+  .item:hover:not([aria-pressed="true"]):not(:disabled){background:var(--surface-2)}
+  .item[aria-pressed="true"]{background:var(--surface-2);border-color:var(--blue)}
+  .item .shot{position:relative;flex:none;line-height:0}
+  .item img{width:58px;height:33px;object-fit:cover;border-radius:5px;display:block;
+            background:var(--track)}
+  .item .play{position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
+  .item .play svg{width:17px;height:17px;filter:drop-shadow(0 1px 2px rgba(0,0,0,.6))}
+  .item .t{display:block;font-size:13.5px;font-weight:600;color:var(--text);line-height:1.25}
+  .item .m{display:block;font-family:var(--mono);font-size:12px;color:var(--text-3);margin-top:2px}
+  .item:disabled{opacity:.5;cursor:not-allowed}
+  .skel{height:47px;border-radius:9px;margin-bottom:5px;
+    background:linear-gradient(90deg,var(--surface-2) 25%,var(--raised) 37%,var(--surface-2) 63%);
+    background-size:400% 100%;animation:shimmer 1.4s ease-in-out infinite}
+  @keyframes shimmer{from{background-position:100% 0}to{background-position:0 0}}
+  @media (prefers-reduced-motion:reduce){.skel{animation:none}}
+  .libnote{font-size:12.5px;color:var(--text-3);padding:6px 4px 0;border-top:1px solid var(--border);
+           margin-top:4px;line-height:1.45}
 
   /* Surfaces the browser owns still belong to the design. */
   ::selection{background:rgba(37,99,235,.40)}
@@ -53,21 +85,6 @@
   .sub b{color:var(--text);font-weight:620}
 
   /* ── the file ─────────────────────────────────────────────── */
-  .picker{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin:30px 0 0}
-  .pick{background:var(--surface);border:1px solid var(--border);border-radius:13px;
-    padding:11px;cursor:pointer;text-align:left;font-family:inherit;color:inherit;
-    display:block;transition:border-color .12s,background .12s}
-  .pick:hover:not([aria-pressed="true"]){border-color:var(--border-strong)}
-  .pick[aria-pressed="true"]{border-color:var(--blue);background:var(--surface-2)}
-  .pick .shot{position:relative;display:block;line-height:0}
-  .pick img{width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:8px;display:block;
-            background:var(--track)}
-  .pick .kindtag{position:absolute;left:8px;top:8px;background:rgba(6,9,12,.72);
-    color:var(--text);font-size:10.5px;font-weight:600;letter-spacing:.04em;
-    padding:3px 7px;border-radius:5px}
-  .pick .t{display:block;font-size:14px;font-weight:600;margin-top:10px;color:var(--text)}
-  .pick .m{display:block;font-family:var(--mono);font-size:11.5px;color:var(--text-3);margin-top:3px}
-  .pick:disabled{opacity:.5;cursor:not-allowed}
   .split{display:flex;justify-content:center;align-items:center;gap:12px;
          color:var(--text-3);font-size:12.5px;margin:18px 0 6px}
   .split .arm{height:1px;background:var(--border);flex:1;max-width:180px}
@@ -157,9 +174,13 @@
   .why code{font-family:var(--mono);color:var(--text);font-size:13px}
   .why a{color:var(--blue);text-underline-offset:3px}
 
+  @media (max-width:900px){
+    .app{grid-template-columns:1fr;gap:22px}
+    .library{position:static;max-height:none}
+    .group{display:flex;flex-direction:column}
+  }
   @media (max-width:760px){
     body{padding:30px 16px 60px}
-    .picker{grid-template-columns:1fr}
     .race{grid-template-columns:1fr}
     button.run{width:100%}
     .segwrap{width:100%;justify-content:center}
@@ -169,6 +190,19 @@
 </head>
 <body>
 <div class="wrap">
+
+  <div class="app">
+
+  <aside class="library">
+    <p class="libtitle">Library</p>
+    <div id="picker">
+      <div class="skel"></div><div class="skel"></div><div class="skel"></div>
+    </div>
+    <p class="libnote">Every file is served from this page's own server, capped at
+      0.4 MB/s per connection.</p>
+  </aside>
+
+  <main class="stage">
 
   <h1>One file. Two ways. Same moment.</h1>
   <p class="sub">
@@ -180,12 +214,10 @@
     that shows, or a video that plays, means every byte arrived where it belonged.
   </p>
 
-  <div class="picker" id="picker" role="group" aria-label="Choose a file to download"></div>
-
   <div class="split"><span class="arm"></span><span id="pickedLine">choose a file</span><span class="arm"></span></div>
 
   <div class="controls">
-    <button class="run" id="run">Start the race</button>
+    <button class="run" id="run">Download both ways</button>
     <div class="segwrap">
       <span>parallel connections</span>
       <div class="seg" role="group" aria-label="Number of parallel connections">
@@ -259,6 +291,9 @@
     </p>
   </section>
 
+  </main>
+  </div>
+
 </div>
 
 <script>
@@ -285,36 +320,53 @@ function clock(el){
 }
 function setBusy(busy){
   $('run').disabled = busy;
-  $('run').textContent = busy ? 'Racing\u2026' : 'Start the race';
-  document.querySelectorAll('.seg button, .pick').forEach(el => el.disabled = busy);
+  $('run').textContent = busy ? 'Downloading\u2026' : 'Download both ways';
+  document.querySelectorAll('.seg button, .item').forEach(el => el.disabled = busy);
 }
 
-// ── the library picker ───────────────────────────────────────────────
+// ── the library rail ─────────────────────────────────────────────────
+const GROUPS = [['Photos', 'Photo'], ['Videos', 'Video']];
+
 async function loadLibrary(){
   const res = await fetch('/api/files', { cache:'no-store' });
   files = await res.json();
   const host = $('picker');
   host.innerHTML = '';
-  files.forEach((f, i) => {
-    const b = document.createElement('button');
-    b.className = 'pick';
-    b.type = 'button';
-    b.setAttribute('aria-pressed', String(i === 0));
-    b.innerHTML =
-      `<span class="shot"><img src="/thumb/${f.id}" alt="" loading="lazy">` +
-      `<span class="kindtag">${f.kind}</span></span>` +
-      `<span class="t">${f.title}</span>` +
-      `<span class="m">${f.fileName} · ${human(f.size)}</span>`;
-    b.addEventListener('click', () => select(f));
-    host.appendChild(b);
+
+  GROUPS.forEach(([label, kind]) => {
+    const inGroup = files.filter(f => f.kind === kind);
+    if(!inGroup.length) return;
+    const section = document.createElement('div');
+    section.className = 'group';
+    section.innerHTML = `<h3>${label}</h3>`;
+    inGroup.forEach(f => {
+      const b = document.createElement('button');
+      b.className = 'item';
+      b.type = 'button';
+      b.dataset.id = f.id;
+      b.setAttribute('aria-pressed','false');
+      const play = f.kind === 'Video'
+        ? '<span class="play"><svg viewBox="0 0 24 24" aria-hidden="true">' +
+          '<circle cx="12" cy="12" r="11" fill="rgba(8,11,14,.6)"/>' +
+          '<path d="M9.8 7.6 17 12l-7.2 4.4z" fill="#fff"/></svg></span>'
+        : '';
+      b.innerHTML =
+        `<span class="shot"><img src="/thumb/${f.id}" alt="" loading="lazy">${play}</span>` +
+        `<span><span class="t">${f.title}</span>` +
+        `<span class="m">${human(f.size)}</span></span>`;
+      b.addEventListener('click', () => select(f));
+      section.appendChild(b);
+    });
+    host.appendChild(section);
   });
+
   if(files.length) select(files[0]);
 }
 
 function select(file){
   current = file;
-  document.querySelectorAll('.pick').forEach((el, i) =>
-    el.setAttribute('aria-pressed', String(files[i].id === file.id)));
+  document.querySelectorAll('.item').forEach(el =>
+    el.setAttribute('aria-pressed', String(el.dataset.id === file.id)));
   $('pickedLine').textContent = `${file.fileName} · ${human(file.size)} · fetched two ways`;
   // A different file invalidates the comparison table.
   history.length = 0;
@@ -383,8 +435,8 @@ function deliver(buf, dropId, openId, name){
     ? `<video src="${url}" controls playsinline muted loop></video>`
     : `<img src="${url}" alt="the downloaded file">`;
   $(openId).innerHTML =
-    `<a href="${url}" target="_blank" rel="noopener">Open the file</a>` +
-    `<a href="${url}" download="${name}">Save it</a>`;
+    `<a href="${url}" target="_blank" rel="noopener">Open</a>` +
+    `<a href="${url}" download="${name}">Save</a>`;
 }
 
 function renderHistory(){
@@ -423,6 +475,7 @@ $('run').addEventListener('click', async () => {
   setBusy(true);
   $('verdict').style.display = 'none';
   const fills = resetLanes(n);
+  $('laneSeq').scrollIntoView({ behavior:'smooth', block:'nearest' });
 
   try{
     const total = current.size;
