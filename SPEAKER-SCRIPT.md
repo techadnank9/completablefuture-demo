@@ -1,270 +1,193 @@
 # Speaker script
 
-Word for word, per slide. Read it as written if you want to; it is meant to sound
-like a person talking, not like a paper being recited.
+The whole talk, written out. Read it as it stands if you like — it is meant to sound
+like a person talking, not a paper being recited.
 
-**Total: about 13 minutes**, with roughly 4 minutes of that being the live demo.
-The slides carry every number, so if the wifi fails you keep going and nobody
-notices.
+**About 12 minutes**, roughly 3 of which is the live demo. Every number is printed on
+a slide, so if the network fails you keep going and nobody notices.
 
-Two things before you start:
-- These lines are also in the deck's **speaker notes** (PowerPoint: *View → Notes
-  Page*, or drag up the pane under the slide). In Presenter View they appear on
-  your screen only.
-- Have `concurrency-demo.onrender.com` open in a browser tab before you begin.
+Before you start: have `concurrency-demo.onrender.com` open in a browser tab. These
+lines are also in the deck's speaker notes (PowerPoint: *View → Notes Page*).
 
 ---
 
-## Slide 1 — Title · 20 seconds
+## 1 · Title — 20 seconds
 
-> Good morning. I want to talk about `CompletableFuture`, which is Java's tool for
-> asynchronous programming.
+> Read the title as a sentence: how a program waits for many things at once. That is
+> the whole subject of the next ten minutes.
 >
-> The subtitle is the whole argument, so I will say it once now and prove it twice
-> later: this does not make your program compute anything faster. What it does is
-> let your program do its **waiting** in parallel. That turns out to matter enormously.
-
-*Move on quickly. The title slide is not where the talk happens.*
+> I am going to define every word before I use it, because most of these words get
+> thrown around loosely and that is where the confusion usually starts.
 
 ---
 
-## Slide 2 — The problem · 90 seconds
+## 2 · Four words — 2 minutes
 
-> Here is a completely ordinary piece of work. We are downloading an eight megabyte
-> file over one connection, from a server that limits each connection to zero point
-> four megabytes per second. It takes about twenty seconds.
+**Slow down here. Everything later rests on this slide.**
+
+> A **thread** is one worker inside your program. It carries out one instruction at a
+> time, in order. When you write a plain Java program, you get exactly one of these.
 >
-> Now look at what the machine is doing during those twenty seconds.
+> **Blocking** is when that worker asks for something slow — a file, a reply from the
+> internet — and simply stops until the answer comes back. It is still holding its
+> memory. It is still occupying a place in the system. And it is doing no work at all.
 >
-> Zero percent CPU. The thread is parked inside a system call, waiting for bytes to
-> arrive from the network. It is holding about a megabyte of stack the entire time,
-> and it is doing nothing whatsoever with it.
+> **Concurrency** is several pieces of work being underway at the same time. And I want
+> to be careful with this one, because it is the one people mishear: this is *not* the
+> same as doing more calculation. Usually it just means more *waiting* happening at once.
 >
-> This is the part people get wrong. When something takes twenty seconds, the
-> instinct is to reach for a faster machine. But there is no computation happening
-> here to speed up. The processor is idle. Buying more of it changes nothing.
+> **Asynchronous** means that instead of stopping to wait for an answer, you say in
+> advance what should be done when the answer arrives, and you carry on with something
+> else in the meantime.
+>
+> And **CompletableFuture** is the Java class that does that last one. It is a container
+> for a value that has not arrived yet, together with the plan for what to do once it
+> has. It arrived in Java 8.
+
+---
+
+## 3 · The problem — 90 seconds
+
+> Here is an ordinary piece of work. We are downloading a nine megabyte file over one
+> connection, from a server that gives each connection about four tenths of a megabyte
+> per second. It takes twenty-one seconds.
+>
+> Now look at what the machine is doing for those twenty-one seconds.
+>
+> Zero percent of the processor. The thread is parked inside a system call, waiting for
+> bytes. It is holding about a megabyte of memory the whole time and using none of it.
+>
+> This is the part that gets misdiagnosed. When something takes twenty-one seconds the
+> instinct is to reach for a faster machine — but there is no calculation happening here
+> to speed up. The processor is already idle.
 >
 > **This was never a CPU problem, so it cannot have a CPU answer.**
 
-*If you pause anywhere in the talk, pause after that last line.*
+*Pause here if you pause anywhere.*
 
 ---
 
-## Slide 3 — What it actually is · 2 minutes
+## 4 · What it is — 2 minutes
 
-**Go slowly here. Everything after this slide is mechanism.**
-
-> So what is a `CompletableFuture`?
+> So what do we do instead? We say: hand me an empty box now, and I will tell you what
+> to do when it fills.
 >
-> It is a value that has not arrived yet. And, more usefully, it is a written plan
-> for what should happen the moment it does.
+> Normally you ask for a value and your thread stops until it is handed one. That
+> stopping is exactly the waste we just measured.
 >
-> Ordinary code asks for a value and stops until it is handed one. That stopping is
-> exactly the waste we just measured on the previous slide.
+> A CompletableFuture is handed to you straight away, and it is empty. The work to fill
+> it is going on somewhere else, on another thread.
 >
-> A `CompletableFuture` hands you the box straight away. The box is empty. The work
-> to fill it is happening somewhere else, on another thread.
+> And then you write down what should happen to the value once it turns up. Change it.
+> Join it with another one. Recover if it fails.
 >
-> And then you describe the rest of the job on that empty box. Transform the result
-> when it arrives. Combine it with another one. Recover if it fails. Give up if it
-> takes too long.
+> None of that has run yet. You are writing instructions about a value you do not have.
+> Only right at the end do you actually ask for the answer — and by then it is usually
+> already sitting there waiting for you.
 >
-> None of that has run yet. You are writing instructions for a value you do not have.
-> Only at the very end do you actually ask for the result — and by then, usually, it
-> is already sitting there.
->
-> The shift is from writing *"wait here, then do this"* to writing *"when this lands,
+> The change is from writing *"wait here, then do this"* to writing *"when this lands,
 > do this"*. The thread stays free the whole way through, which means it can be handed
-> somebody else's work instead of sitting idle.
+> somebody else's work instead of standing idle.
 
 ---
 
-## Slide 4 — Why the API looks like this · 75 seconds
+## 5 · Using it — 2 minutes *(then the demo)*
 
-> Java has had a `Future` since 2004. It was not enough, and it is worth knowing why,
-> because it explains the shape of everything on the right.
+> Here is that applied to the download.
 >
-> On the left is the old `Future`. You submit work, you get a handle back, and then
-> there is exactly one thing you can do with that handle: call `get`, which blocks.
-> That is the whole API. If you wanted to chain a second step onto the first, or
-> combine two results, or recover from a failure, you wrote that yourself. By hand.
-> In every project. Usually badly.
+> We cut the file into eight byte ranges, and we ask for all eight at the same moment.
+> That is `supplyAsync`, once per range.
 >
-> Ten years of that is why `CompletableFuture` arrived in Java 8, and why it has so
-> many methods. Every one of them exists because somebody kept having to write it.
+> `allOf` finishes when every one of them has finished, and `thenApply` turns that into
+> the completed file.
 >
-> On the right, the whole pipeline is described up front, and nothing has blocked yet.
+> The detail that makes it safe is this: the ranges never overlap, and the file is
+> allocated up front, so each range writes into its own place. Nothing is shared, so
+> nothing needs a lock — there is no `synchronized` anywhere in this code.
+>
+> One connection: twenty-one seconds. Eight connections: two point six. Eight times
+> faster. And both files have the same checksum, so not one byte landed in the wrong
+> place.
+>
+> The graph on the right answers the obvious next question — if eight is good, why not
+> eight hundred? It is linear up to eight, then completely flat. Past that the limit is
+> total bandwidth, and every extra connection costs a thread and a socket while buying
+> nothing.
 
----
+**→ Switch to the browser.** Let the room pick a file from the library on the left,
+press *Download both ways*, and talk over it:
 
-## Slide 5 — Fan out, fan in · 75 seconds
-
-> Here is the shape that almost every solution takes.
->
-> We start with one file. We cut it into byte ranges — eight of them here — and we
-> request all eight at the same moment. That is the fan out, and it is one
-> `supplyAsync` per range.
->
-> Then we fan back in. `allOf` completes when every range has completed, and
-> `thenApply` turns that into the finished result.
->
-> The important detail is the one that makes it safe. The ranges never overlap, and
-> the output file is allocated up front, so each range writes straight into its own
-> offset. Nothing is shared, so nothing needs a lock — there is not a single
-> `synchronized` anywhere in this code.
->
-> And that is precisely why, on the next slide, the two checksums come out identical.
+> Left is one connection, right is eight. Watch the clocks. Both sides end up with
+> their own copy that you can open — same picture, same checksum. One just arrived
+> about eighteen seconds earlier.
 
 ---
 
-## Slide 6 — Measured · 60 seconds *(then the live demo)*
+## 6 · Joining steps — 90 seconds
 
-> These are real measurements, not estimates.
+> These two methods are the most confused pair in the API, and one question separates
+> them: **does the next step need the answer from the one before it?**
 >
-> Same file, nine megabytes. Both sides started at the same instant, against the same
-> server, over the same connection — so nobody can argue that the second run simply
-> caught a quieter moment on the network.
+> On the left, yes. You cannot brew before you grind. Each step hands back its own box,
+> and `thenCompose` flattens them into a single chain.
 >
-> One connection: twenty-one seconds. Eight connections: two point six seconds. Eight
-> times faster.
+> On the right, no. The pastry never needed the coffee. Those two were already running
+> side by side, and `thenCombine` joins them at the end. So the pair costs the slower of
+> the two — two and a half seconds — instead of the two added together, which would be
+> four.
 >
-> And the line that actually matters is underneath. The SHA-256 checksums are
-> identical. Eight threads wrote into one file at eight different offsets, and not a
-> single byte landed in the wrong place.
->
-> Speed alone would not be worth much. Speed with a matching checksum is the result.
-
-**→ Switch to the browser now.** Pick a file from the library on the left, press
-*Download both ways*, and talk over it while it runs:
-
-> The left side is one connection. The right is eight. Watch the clocks.
->
-> Both sides end up with their own copy of the file, and you can open either one. Same
-> picture. Same checksum. One of them just arrived about eighteen seconds earlier.
-
-*If the network misbehaves, stop and go back to the slide — the numbers are on it.*
+> Needs the answer? Compose. Never needed it? Combine.
 
 ---
 
-## Slide 7 — Sizing the pool · 75 seconds
+## 7 · When it goes wrong — 90 seconds
 
-> A fair question at this point is: if eight connections are good, why not eight
-> hundred?
+> Asynchronous work fails in two different ways, and they need different tools.
 >
-> This is the same download at one, two, four, eight, sixteen and thirty-two
-> connections. Up to eight it is almost perfectly linear — each new connection buys
-> real bandwidth, because the server limits each one separately.
+> The first is the one you expect. Something throws an error. `exceptionally` supplies a
+> replacement value so the rest of the chain carries on instead of collapsing.
 >
-> After eight it is flat. Completely flat. The bottleneck stopped being concurrency
-> and became total bandwidth, and connections nine through thirty-two bought us
-> precisely nothing.
+> The second is more interesting. Sometimes the work simply never finishes. Nothing is
+> thrown. There is no error to catch, so a `try`/`catch` would sit there forever.
+> `orTimeout` is what turns that silence into a timeout you can actually respond to.
 >
-> They were not free, either. Every one of them costs a thread, a socket, buffers and
-> context switches. We paid for all of that and got nothing back.
+> And `handle` runs on both paths, success and failure, so the tidying-up gets written
+> once rather than twice.
 >
-> So: size the pool to the work. Not to the machine, and not to optimism.
-
----
-
-## Slide 8 — Compose or combine · 75 seconds
-
-> These two methods are the most commonly confused pair in the API, and there is one
-> question that settles it every time: **does the next step need the previous step's
-> answer?**
->
-> On the left, yes. You cannot brew coffee before you have ground the beans. Each step
-> returns its own future, and `thenCompose` flattens them into one chain. If you used
-> `thenApply` here you would end up holding a `CompletableFuture` of a
-> `CompletableFuture`, which is a real thing that happens to people.
->
-> On the right, no. The croissant never needed the coffee. Those two futures were
-> never related, so they run side by side and `thenCombine` joins them at the end.
-> The pair costs the slower of the two — two and a half seconds — rather than the sum
-> of both, which would be four.
->
-> Need the answer? Compose. Never needed it? Combine.
+> The box at the bottom is the trap I would most want you to remember. If you call
+> `supplyAsync` and do not give it a thread pool, it does not make one for you. It
+> borrows the single pool the entire JVM shares — which is built for short calculations.
+> Block that with a download and you stall unrelated parts of your own program.
 
 ---
 
-## Slide 9 — Resilience · 75 seconds
-
-> Asynchronous code fails in two different ways, and they need two different tools.
->
-> The first is the one you expect: something throws. The future completes
-> exceptionally, and `exceptionally` supplies a replacement value so the rest of the
-> pipeline carries on. The customer still gets a drink.
->
-> The second is more interesting. Sometimes the work simply never finishes. Nothing
-> throws. There is no exception, so there is nothing for a `try`/`catch` to catch —
-> it would sit there forever. `orTimeout` is what turns that silence into a
-> `TimeoutException` you can actually act on.
->
-> And `handle` runs on both paths, success and failure, so the closing summary gets
-> written once instead of twice.
->
-> The result is that one broken order never takes the others down with it, and the
-> program never crashes.
-
----
-
-## Slide 10 — The traps · 2 minutes
-
-**This is the slide that shows you built something rather than read a tutorial.
-Do not rush it.**
-
-> Four things that will bite you, none of which the tutorials mention.
->
-> First. If you call `supplyAsync` without passing an executor, it does not create a
-> thread for you. It runs on the shared common ForkJoinPool — sized to your core
-> count, shared with every parallel stream in the JVM, and designed for short
-> CPU-bound work. Block it with I/O and you stall unrelated parts of your own
-> program. Always pass your own pool.
->
-> Second. `thenApply` makes no promise about which thread runs your callback. It runs
-> on whichever thread happened to complete the future — or, if the future was already
-> complete, on your calling thread, right there, synchronously. If you need to know,
-> use the `Async` variants.
->
-> Third. `allOf` waits for all of them, even after one has already failed. It
-> completes exceptionally, but not early. In this project one chunk failed at
-> sixty-two seconds and the join still did not return until a hundred and ten,
-> because the surviving chunks were left to finish.
->
-> Fourth. `orTimeout` gives up, but it does not cancel. Your future completes
-> exceptionally and you move on, while the work underneath carries right on running
-> and holding its thread. The timeout protects the caller, not the server.
-
----
-
-## Slide 11 — Takeaways · 45 seconds
+## 8 · Takeaways — 45 seconds
 
 > Four things to take away.
 >
-> It buys waiting, not speed. It wins exactly where threads sit blocked on I/O, and
-> it will never make your CPU faster.
+> It buys waiting, not speed. It wins where threads sit blocked on input and output, and
+> it will never make your processor faster.
 >
-> Partition, and you need no locks. Eight threads, eight offsets, one matching hash.
-> Design it so the parallel parts cannot collide and you never have to synchronise them.
+> Split the work and you need no locks. Eight threads, eight separate places to write,
+> one matching checksum.
 >
-> Own every executor. Never put blocking work on the common pool, name your threads
-> so you can read your own logs, size the pool to the work, and shut it down in a
-> `finally`.
+> Own every thread pool you use. Never put blocking work on the shared one.
 >
-> And compose, but block only once, right at the end.
+> And describe first, wait once, at the end.
 >
-> That QR code is the demo. Scan it and race a file yourself — it runs fine on a
-> phone. Happy to take questions.
+> That QR code is the live demo — scan it and download a file yourself, it works fine on
+> a phone. Happy to take questions.
 
-**Leave this slide up.** People scanning the code while you answer questions is a
-much better closing image than a bulleted summary.
+**Leave this slide up** while you answer.
 
 ---
 
 ## If something goes wrong
 
-| Problem | What to do |
+| Problem | What to say |
 |---|---|
-| The live page is slow or will not load | Go back to slide 6. Every number is on it. Say "the numbers are measured, here they are" and carry on. |
-| Someone asks why the browser demo is slower than the slide | Browsers open only about six connections per origin on HTTP/1.1, so asking for sixteen ranges just queues them. The page says so itself when it detects it. Same lesson as slide 7. |
-| Asked whether this works on any website | No. The speedup needs a server that limits each connection separately. Against a CDN that does not, the gain is close to nothing — measured at 1.1× against GitHub. That is a feature of the explanation, not a gap in it. |
-| Asked about virtual threads | Fair question, out of scope for today. Short answer: virtual threads make blocking cheap; `CompletableFuture` is about composing dependent work. Different problems. |
+| Page slow or will not load | Go back to slide 5; every number is printed on it. "The numbers are measured, here they are." |
+| Browser demo slower than the slide | Browsers open only about six connections per site, so asking for sixteen ranges just queues the extras. The page says so when it detects it — and it is the same lesson as the flat part of the graph. |
+| "Does this work on any website?" | No. It needs a server that limits each connection separately. Against a CDN that does not, the gain is almost nothing — measured at 1.1× against GitHub. |
+| "What about virtual threads?" | Out of scope today. Short answer: virtual threads make blocking cheap; CompletableFuture is about composing dependent work. Different problems. |
+| "Why is it faster if the CPU was idle?" | Because the limit was never the CPU. One connection gets a fixed share of bandwidth; eight connections get eight shares. |
