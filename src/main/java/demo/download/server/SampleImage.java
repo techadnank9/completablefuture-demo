@@ -27,8 +27,6 @@ import java.util.Random;
 public final class SampleImage {
 
     /** Brand colours, matching the slides and the web page. */
-    private static final Color TEAL = new Color(0x00A896);
-    private static final Color AMBER = new Color(0xF2A65A);
 
     private SampleImage() {
     }
@@ -81,8 +79,16 @@ public final class SampleImage {
      * byte arrived where it belonged; the hash underneath only confirms it.
      */
     private static void draw(Graphics2D g, int w, int h) {
-        // Three stops, deep blue through teal to amber, walked smoothly by the field.
-        final Color[] stops = { new Color(0x10243A), TEAL, AMBER };
+        // Warm stops, deliberately nothing like the interface that frames them. The
+        // page chrome is neutral grey so that the content is the only saturated thing
+        // on screen; an image sharing the UI's palette would camouflage into it and
+        // stop reading as a downloaded file at all.
+        final Color[] stops = {
+                new Color(0x2B1533),   // deep plum
+                new Color(0xB5296B),   // magenta
+                new Color(0xF2762E),   // orange
+                new Color(0xFFC24B),   // gold
+        };
 
         for (int y = 0; y < h; y++) {
             double v = y / (double) h;
@@ -106,7 +112,7 @@ public final class SampleImage {
 
         // A quiet caption, small enough that it never reads as interface.
         double unit = h / 100.0;
-        g.setColor(new Color(255, 255, 255, 190));
+        g.setColor(new Color(255, 255, 255, 170));
         g.setFont(new Font("SansSerif", Font.PLAIN, (int) (unit * 2.6)));
         g.drawString("concurrency-demo.onrender.com", (int) (unit * 4), (int) (h - unit * 4));
     }
