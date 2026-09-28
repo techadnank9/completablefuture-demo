@@ -3,7 +3,6 @@ package demo.download.server;
 import demo.common.Bytes;
 import demo.common.Console;
 import demo.common.Log;
-import demo.download.DownloadDemo;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -56,7 +55,11 @@ public final class ServeCommand {
         Log.resetClock();
         Console.banner("FILE SERVER");
 
-        Path file = DownloadDemo.generateSampleFile(sizeMb);
+        // A real PNG, not random bytes: the page shows the downloaded image, so the
+        // audience sees the two rounds produce the identical picture rather than
+        // being asked to trust two hex strings.
+        Path file = SampleImage.write(
+                Files.createTempDirectory("cf-demo-").resolve("concurrency.png"), sizeMb);
 
         // 0.0.0.0, not loopback: the platform routes external traffic to us.
         // No global cap here - the per-connection limit is the whole mechanism,

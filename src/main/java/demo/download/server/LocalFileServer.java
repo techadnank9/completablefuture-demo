@@ -44,6 +44,8 @@ public final class LocalFileServer implements AutoCloseable {
     private final String fileName;
     private final double perConnectionBytesPerSecond;
     private final ThrottledOutputStream.Limiter globalLimiter;
+    /** Small unthrottled preview of the served image, or {@code null} if not an image. */
+    private volatile byte[] thumbnail;
 
     private LocalFileServer(HttpServer server, ExecutorService serverPool, Path file, long fileSize,
                             double perConnectionBytesPerSecond,
@@ -96,6 +98,15 @@ public final class LocalFileServer implements AutoCloseable {
         http.createContext("/" + instance.fileName, instance::handle);
         // Liveness probe for the hosting platform. Registered as a longer prefix than
         // "/", so it wins the match and a health check never downloads the file.
+        // Built once at startup and served unthrottled: the page needs to show the
+        // file immediately, and the real one is deliberately slow.
+        try {
+            instance.thumbnail = SampleImage.thumbnail(file, 760);
+        } catch (IOException | RuntimeException e) {
+            instance.thumbnail = null;      // not an image, or unreadable: no preview
+        }
+
+        http.createContext("/preview.png", instance::handlePreview);
         http.createContext("/health", LocalFileServer::handleHealth);
         http.createContext("/info", instance::handleInfo);
         // The interactive page. It runs the same comparison in the browser, against
@@ -116,6 +127,38 @@ public final class LocalFileServer implements AutoCloseable {
 
     public long fileSize() {
         return fileSize;
+    }
+
+    /** The unthrottled thumbnail. 404s when the served file is not an image. */
+    private void handlePreview(HttpExchange exchange) throws IOException {
+        byte[] thumb = thumbnail;
+        if (thumb == null) {
+            exchange.sendResponseHeaders(404, -1);
+            exchange.close();
+            return;
+        }
+        exchange.getResponseHeaders().add("Content-Type", "image/jpeg");
+        exchange.getResponseHeaders().add("Cache-Control", "public, max-age=3600");
+        exchange.sendResponseHeaders(200, thumb.length);
+        try (OutputStream out = exchange.getResponseBody()) {
+            out.write(thumb);
+        }
+        exchange.close();
+    }
+
+    /** Media type from the file extension, so a browser can open it directly. */
+    private String contentType() {
+        String lower = fileName.toLowerCase();
+        if (lower.endsWith(".png")) {
+            return "image/png";
+        }
+        if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) {
+            return "image/jpeg";
+        }
+        if (lower.endsWith(".mp4")) {
+            return "video/mp4";
+        }
+        return "application/octet-stream";
     }
 
     /** Cheap 200 for platform health checks. */
@@ -193,7 +236,7 @@ public final class LocalFileServer implements AutoCloseable {
         try {
             String method = exchange.getRequestMethod();
             exchange.getResponseHeaders().add("Accept-Ranges", "bytes");
-            exchange.getResponseHeaders().add("Content-Type", "application/octet-stream");
+            exchange.getResponseHeaders().add("Content-Type", contentType());
             // Without this the browser would serve round 2 from cache and "win" instantly.
             exchange.getResponseHeaders().add("Cache-Control", "no-store");
 
